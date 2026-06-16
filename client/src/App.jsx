@@ -15,6 +15,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
+  const [pendingRegistration, setPendingRegistration] = useState(null);
+  const [authStep, setAuthStep] = useState('login');
   const [showSettings, setShowSettings] = useState(false);
 
   const [sidebarTab, setSidebarTab] = useState('fathom');
@@ -36,13 +38,45 @@ export default function App() {
       if (params.get('auth') === 'failed') setAuthError('Google sign-in failed. Try again.');
       const { user: u } = await api.getMe();
       setUser(u);
+      if (u) {
+        if (!u.vaultSetup || params.get('needsEncryptionSetup') === '1') {
+          setAuthStep('setup');
+        } else if (!u.vaultUnlocked || params.get('needsVaultUnlock') === '1') {
+          setAuthStep('unlock');
+        } else {
+          setAuthStep('app');
+        }
+      }
       if (params.get('auth')) window.history.replaceState({}, '', '/');
     } catch {
       setUser(null);
+      setAuthStep('login');
     } finally {
       setAuthLoading(false);
     }
   }, []);
+
+  function handleAuthSuccess(result) {
+    const nextUser = result.user || result;
+    setUser(nextUser);
+    if (result.needsEncryptionSetup || !nextUser.vaultSetup) {
+      setAuthStep('setup');
+    } else if (result.needsVaultUnlock || !nextUser.vaultUnlocked) {
+      setAuthStep('unlock');
+    } else {
+      setAuthStep('app');
+    }
+  }
+
+  function handleRegisterPending({ pendingId, email }) {
+    setPendingRegistration({ pendingId, email });
+    setAuthStep('verify');
+  }
+
+  function handleVerified(result) {
+    setPendingRegistration(null);
+    handleAuthSuccess(result);
+  }
 
   const loadDbMeetings = useCallback(async () => {
     try {
@@ -97,15 +131,17 @@ export default function App() {
   useEffect(() => { loadAuth(); }, [loadAuth]);
 
   useEffect(() => {
-    if (user) {
+    if (user?.vaultUnlocked) {
       loadDbMeetings();
       loadFathomFromDb();
     }
-  }, [user, loadDbMeetings, loadFathomFromDb]);
+  }, [user?.vaultUnlocked, loadDbMeetings, loadFathomFromDb]);
 
   async function handleLogout() {
     await api.logout();
     setUser(null);
+    setAuthStep('login');
+    setPendingRegistration(null);
     setFathomMeetings([]);
     setDbMeetings([]);
     setView('welcome');
@@ -166,7 +202,64 @@ export default function App() {
     );
   }
 
-  if (!user) return <LoginScreen authError={authError} onAuthSuccess={setUser} />;
+  if (!user || authStep === 'login') {
+    return (
+      <LoginScreen
+        authError={authError}
+        onAuthSuccess={handleAuthSuccess}
+        onRegisterPending={handleRegisterPending}
+      />
+    );
+  }
+
+  if (authStep === 'verify' && pendingRegistration) {
+    return (
+      <VerifyEmailScreen
+        pendingId={pendingRegistration.pendingId}
+        email={pendingRegistration.email}
+        onVerified={handleVerified}
+        onBack={() => { setAuthStep('login'); setPendingRegistration(null); }}
+      />
+    );
+  }
+
+  if (authStep === 'setup') {
+    return (
+      <EncryptionKeyScreen
+        mode="setup"
+        onComplete={() => {
+          setUser((u) => ({ ...u, vaultSetup: true, vaultUnlocked: true }));
+          setAuthStep('app');
+        }}
+      />
+    );
+  }
+
+  if (authStep === 'unlock') {
+    return (
+      <EncryptionKeyScreen
+        mode="unlock"
+        onComplete={(nextUser) => {
+          setUser(nextUser);
+          setAuthStep('app');
+        }}
+      />
+    );
+  }
+
+  if (!user.vaultUnlocked) {
+    return (
+      <EncryptionKeyScreen
+        mode="unlock"
+        onComplete={(nextUser) => {
+          setUser(nextUser);
+          setAuthStep('app');
+        }}
+      />
+    );
+  }
+
+  if (!user) return <LoginScreen authError={authError} onAuthSuccess={handleAuthSuccess} onRegisterPending={handleRegisterPending} />;
 
   const selectedId = view === 'import'
     ? (selectedFathomMeeting?.recording_id || selectedFathomMeeting?.id)
