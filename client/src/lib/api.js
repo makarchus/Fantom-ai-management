@@ -64,6 +64,11 @@ export const api = {
   // Auth
   getMe: () => request('/auth/me'),
   register: (body) => request('/auth/register', { method: 'POST', body }),
+  verifyEmail: (body) => request('/auth/verify-email', { method: 'POST', body }),
+  resendCode: (body) => request('/auth/resend-code', { method: 'POST', body }),
+  setupEncryption: () => request('/auth/setup-encryption', { method: 'POST' }),
+  unlockVault: (body) => request('/auth/unlock-vault', { method: 'POST', body }),
+  lockVault: () => request('/auth/lock-vault', { method: 'POST' }),
   login: (body) => request('/auth/login', { method: 'POST', body }),
   logout: () => request('/auth/logout', { method: 'POST' }),
   googleLoginUrl: () => `${BASE}/auth/google`,

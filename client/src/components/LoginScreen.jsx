@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { LogIn, UserPlus } from 'lucide-react';
 import { api } from '../lib/api.js';
 
-export default function LoginScreen({ authError, onAuthSuccess }) {
-  const [mode, setMode] = useState('login'); // 'login' | 'register'
+export default function LoginScreen({ authError, onAuthSuccess, onRegisterPending }) {
+  const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -28,11 +28,11 @@ export default function LoginScreen({ authError, onAuthSuccess }) {
           setLoading(false);
           return;
         }
-        const { user } = await api.register({ email, password, name });
-        onAuthSuccess?.(user);
+        const result = await api.register({ email, password, name });
+        onRegisterPending?.({ pendingId: result.pendingId, email: result.email });
       } else {
-        const { user } = await api.login({ email, password });
-        onAuthSuccess?.(user);
+        const result = await api.login({ email, password });
+        onAuthSuccess?.(result);
       }
     } catch (err) {
       setError(err.message);
@@ -136,12 +136,18 @@ export default function LoginScreen({ authError, onAuthSuccess }) {
             </div>
           )}
 
+          {mode === 'register' && (
+            <p style={{ fontSize: 11, color: 'var(--slate-300)', marginBottom: 12, lineHeight: 1.5 }}>
+              After sign-up, we will email you a verification code (2FA) before your account is activated.
+            </p>
+          )}
+
           {error && (
             <p style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12 }}>{error}</p>
           )}
 
           <button type="submit" className="btn btn-primary" style={{ width: '100%', marginBottom: 16 }} disabled={loading}>
-            {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
+            {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Send verification code'}
           </button>
         </form>
 

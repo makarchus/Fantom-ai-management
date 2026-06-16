@@ -6,6 +6,8 @@ import MeetingDetail from './components/MeetingDetail.jsx';
 import CommitmentsTracker from './components/CommitmentsTracker.jsx';
 import ManualMeetingImporter from './components/ManualMeetingImporter.jsx';
 import LoginScreen from './components/LoginScreen.jsx';
+import VerifyEmailScreen from './components/VerifyEmailScreen.jsx';
+import EncryptionKeyScreen from './components/EncryptionKeyScreen.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import { api } from './lib/api.js';
 
