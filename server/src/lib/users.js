@@ -3,13 +3,16 @@ import bcrypt from 'bcryptjs';
 import pool from '../db/pool.js';
 import {
   createKeyVerifier,
+  encryptForStorage,
   generateEncryptionKey,
   generateUserSalt,
   generateVerificationCode,
   hashVerificationCode,
   verifyVerificationCode,
+  verifyEncryptionKey,
 } from './encryption.js';
-import { sendVerificationEmail } from './email.js';
+import { sendVerificationEmail, sendLoginVerificationEmail } from './email.js';
+import { linkPendingAssignmentsToUser } from './actionAssignments.js';
 import { isVaultUnlocked } from './vault.js';
 import { userHasFathomKey } from './userSecrets.js';
 
@@ -19,7 +22,7 @@ const MAX_CODE_ATTEMPTS = 5;
 
 const USER_SELECT = `
   id, google_id, email, name, avatar_url, auth_provider, email_verified,
-  encryption_key_salt, encryption_key_verifier, vault_setup_at,
+  encryption_key_salt, encryption_key_verifier, encryption_key_stored_enc, vault_setup_at,
   fathom_api_key_enc, fathom_recorder_email_enc, fathom_synced_at, password_hash
 `;
 
@@ -155,6 +158,7 @@ export async function verifyRegistration({ pendingId, code }) {
   );
 
   await pool.query('DELETE FROM pending_registrations WHERE id = $1', [pendingId]);
+  await linkPendingAssignmentsToUser(id, pending.email);
   return created[0];
 }
 
@@ -174,19 +178,154 @@ export async function setupUserEncryption(userId) {
   const encryptionKey = generateEncryptionKey();
   const salt = generateUserSalt();
   const verifier = createKeyVerifier(encryptionKey, salt);
+  const storedEnc = encryptForStorage(encryptionKey);
 
   const { rows } = await pool.query(
     `UPDATE users SET
       encryption_key_salt = $1,
       encryption_key_verifier = $2,
+      encryption_key_stored_enc = $3,
       vault_setup_at = NOW(),
       updated_at = NOW()
-     WHERE id = $3
+     WHERE id = $4
      RETURNING ${USER_SELECT}`,
-    [salt, verifier, userId],
+    [salt, verifier, storedEnc, userId],
   );
 
   return { user: rows[0], encryptionKey };
+}
+
+export async function storeEncryptionKeyForUser(userId, encryptionKey) {
+  const storedEnc = encryptForStorage(encryptionKey);
+  await pool.query(
+    `UPDATE users SET encryption_key_stored_enc = $1, updated_at = NOW() WHERE id = $2`,
+    [storedEnc, userId],
+  );
+}
+
+export async function requestLoginVerification(user) {
+  if (!user?.id || !user?.email) {
+    const err = new Error('User not found');
+    err.status = 404;
+    throw err;
+  }
+
+  await pool.query('DELETE FROM pending_logins WHERE user_id = $1', [user.id]);
+
+  const pendingLoginId = randomUUID();
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + CODE_TTL_MS);
+
+  await pool.query(
+    `INSERT INTO pending_logins (id, user_id, code_hash, expires_at)
+     VALUES ($1, $2, $3, $4)`,
+    [pendingLoginId, user.id, hashVerificationCode(code, pendingLoginId), expiresAt],
+  );
+
+  await sendLoginVerificationEmail({
+    to: user.email,
+    code,
+    name: user.name,
+  });
+
+  return {
+    pendingLoginId,
+    email: user.email,
+    expiresAt: expiresAt.toISOString(),
+    needsEncryptionSetup: !user.encryption_key_verifier,
+  };
+}
+
+export async function verifyLoginCode({ pendingLoginId, code }) {
+  const { rows } = await pool.query(
+    'SELECT * FROM pending_logins WHERE id = $1',
+    [pendingLoginId],
+  );
+  const pending = rows[0];
+  if (!pending) {
+    const err = new Error('Login verification expired. Please sign in again.');
+    err.status = 404;
+    throw err;
+  }
+
+  if (new Date(pending.expires_at) < new Date()) {
+    await pool.query('DELETE FROM pending_logins WHERE id = $1', [pendingLoginId]);
+    const err = new Error('Verification code expired. Please sign in again.');
+    err.status = 410;
+    throw err;
+  }
+
+  if (pending.attempts >= MAX_CODE_ATTEMPTS) {
+    await pool.query('DELETE FROM pending_logins WHERE id = $1', [pendingLoginId]);
+    const err = new Error('Too many failed attempts. Please sign in again.');
+    err.status = 429;
+    throw err;
+  }
+
+  if (!verifyVerificationCode(code, pendingLoginId, pending.code_hash)) {
+    await pool.query(
+      'UPDATE pending_logins SET attempts = attempts + 1 WHERE id = $1',
+      [pendingLoginId],
+    );
+    const err = new Error('Invalid verification code');
+    err.status = 401;
+    throw err;
+  }
+
+  const user = await findUserById(pending.user_id);
+  if (!user) {
+    await pool.query('DELETE FROM pending_logins WHERE id = $1', [pendingLoginId]);
+    const err = new Error('User not found');
+    err.status = 404;
+    throw err;
+  }
+
+  await pool.query('DELETE FROM pending_logins WHERE id = $1', [pendingLoginId]);
+  await linkPendingAssignmentsToUser(user.id, user.email);
+  return user;
+}
+
+export async function resendLoginCode(pendingLoginId) {
+  const { rows } = await pool.query(
+    'SELECT user_id FROM pending_logins WHERE id = $1',
+    [pendingLoginId],
+  );
+  if (!rows[0]) {
+    const err = new Error('Login verification expired. Please sign in again.');
+    err.status = 404;
+    throw err;
+  }
+  const user = await findUserById(rows[0].user_id);
+  if (!user) {
+    const err = new Error('User not found');
+    err.status = 404;
+    throw err;
+  }
+  return requestLoginVerification(user);
+}
+
+export async function recoverVaultAccess(email, encryptionKey) {
+  const user = await findUserByEmail(email);
+  if (!user?.encryption_key_verifier) {
+    const err = new Error('No vault found for this account');
+    err.status = 404;
+    throw err;
+  }
+
+  const valid = verifyEncryptionKey(
+    encryptionKey,
+    user.encryption_key_salt,
+    user.encryption_key_verifier,
+  );
+  if (!valid) {
+    const err = new Error('Invalid encryption key');
+    err.status = 401;
+    throw err;
+  }
+
+  await storeEncryptionKeyForUser(user.id, encryptionKey);
+  const refreshed = await findUserById(user.id);
+  return refreshed;
 }
 
 export async function verifyLocalPassword(user, password) {
@@ -202,6 +341,7 @@ export async function upsertGoogleUser({ googleId, email, name, avatarUrl }) {
        WHERE google_id = $4 RETURNING ${USER_SELECT}`,
       [email, name, avatarUrl, googleId],
     );
+    await linkPendingAssignmentsToUser(rows[0].id, email);
     return rows[0];
   }
 
@@ -215,6 +355,7 @@ export async function upsertGoogleUser({ googleId, email, name, avatarUrl }) {
        WHERE id = $4 RETURNING ${USER_SELECT}`,
       [googleId, name, avatarUrl, byEmail.id],
     );
+    await linkPendingAssignmentsToUser(byEmail.id, email);
     return rows[0];
   }
 
@@ -225,6 +366,7 @@ export async function upsertGoogleUser({ googleId, email, name, avatarUrl }) {
      RETURNING ${USER_SELECT}`,
     [id, googleId, email, name, avatarUrl],
   );
+  await linkPendingAssignmentsToUser(id, email);
   return rows[0];
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Target, RefreshCw, Settings, LogOut, Key, KeyRound, User } from 'lucide-react';
+import { Target, RefreshCw, Settings, LogOut, Key, KeyRound, User, ListChecks, Archive } from 'lucide-react';
 import Sidebar from './components/Sidebar.jsx';
 import MeetingImporter from './components/MeetingImporter.jsx';
 import MeetingDetail from './components/MeetingDetail.jsx';
@@ -9,6 +9,10 @@ import LoginScreen from './components/LoginScreen.jsx';
 import VerifyEmailScreen from './components/VerifyEmailScreen.jsx';
 import EncryptionKeyScreen from './components/EncryptionKeyScreen.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
+import MyActionItems from './components/MyActionItems.jsx';
+import ArchivedActionItems from './components/ArchivedActionItems.jsx';
+import ActionItemsQueue from './components/ActionItemsQueue.jsx';
+import VaultUnlockBanner from './components/VaultUnlockBanner.jsx';
 import { api } from './lib/api.js';
 
 export default function App() {
@@ -16,6 +20,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
   const [pendingRegistration, setPendingRegistration] = useState(null);
+  const [pendingLogin, setPendingLogin] = useState(null);
   const [authStep, setAuthStep] = useState('login');
   const [showSettings, setShowSettings] = useState(false);
 
@@ -31,6 +36,11 @@ export default function App() {
   const [view, setView] = useState('welcome');
   const [selectedFathomMeeting, setSelectedFathomMeeting] = useState(null);
   const [selectedDbMeetingId, setSelectedDbMeetingId] = useState(null);
+  const [actionQueueRefresh, setActionQueueRefresh] = useState(0);
+
+  const bumpActionQueue = useCallback(() => {
+    setActionQueueRefresh((n) => n + 1);
+  }, []);
 
   const loadAuth = useCallback(async () => {
     try {
@@ -41,31 +51,44 @@ export default function App() {
       if (u) {
         if (!u.vaultSetup || params.get('needsEncryptionSetup') === '1') {
           setAuthStep('setup');
-        } else if (!u.vaultUnlocked || params.get('needsVaultUnlock') === '1') {
-          setAuthStep('unlock');
         } else {
           setAuthStep('app');
         }
+      } else if (params.get('loginVerify') === '1' && params.get('pendingLoginId')) {
+        setPendingLogin({
+          pendingLoginId: params.get('pendingLoginId'),
+          email: params.get('email') || '',
+          needsEncryptionSetup: params.get('needsEncryptionSetup') === '1',
+        });
+        setAuthStep('login-verify');
       }
-      if (params.get('auth')) window.history.replaceState({}, '', '/');
+      if (params.get('auth') || params.get('loginVerify')) {
+        window.history.replaceState({}, '', '/');
+      }
+      if (u?.vaultUnlocked) bumpActionQueue();
     } catch {
       setUser(null);
       setAuthStep('login');
     } finally {
       setAuthLoading(false);
     }
-  }, []);
+  }, [bumpActionQueue]);
 
   function handleAuthSuccess(result) {
     const nextUser = result.user || result;
     setUser(nextUser);
+    setPendingLogin(null);
     if (result.needsEncryptionSetup || !nextUser.vaultSetup) {
       setAuthStep('setup');
-    } else if (result.needsVaultUnlock || !nextUser.vaultUnlocked) {
-      setAuthStep('unlock');
     } else {
       setAuthStep('app');
+      bumpActionQueue();
     }
+  }
+
+  function handleLoginPending({ pendingLoginId, email, needsEncryptionSetup }) {
+    setPendingLogin({ pendingLoginId, email, needsEncryptionSetup });
+    setAuthStep('login-verify');
   }
 
   function handleRegisterPending({ pendingId, email }) {
@@ -142,6 +165,7 @@ export default function App() {
     setUser(null);
     setAuthStep('login');
     setPendingRegistration(null);
+    setPendingLogin(null);
     setFathomMeetings([]);
     setDbMeetings([]);
     setView('welcome');
@@ -191,6 +215,7 @@ export default function App() {
   function handleImportComplete(meetingId) {
     loadDbMeetings();
     loadFathomFromDb();
+    bumpActionQueue();
     handleOpenSaved(meetingId);
   }
 
@@ -202,64 +227,51 @@ export default function App() {
     );
   }
 
-  if (!user || authStep === 'login') {
+  if (!user) {
+    if (authStep === 'verify' && pendingRegistration) {
+      return (
+        <VerifyEmailScreen
+          mode="register"
+          pendingId={pendingRegistration.pendingId}
+          email={pendingRegistration.email}
+          onVerified={handleVerified}
+          onBack={() => { setAuthStep('login'); setPendingRegistration(null); }}
+        />
+      );
+    }
+    if (authStep === 'login-verify' && pendingLogin) {
+      return (
+        <VerifyEmailScreen
+          mode="login"
+          pendingLoginId={pendingLogin.pendingLoginId}
+          email={pendingLogin.email}
+          onVerified={handleAuthSuccess}
+          onPendingLoginIdChange={(id) => setPendingLogin((p) => ({ ...p, pendingLoginId: id }))}
+          onBack={() => { setAuthStep('login'); setPendingLogin(null); }}
+        />
+      );
+    }
     return (
       <LoginScreen
         authError={authError}
         onAuthSuccess={handleAuthSuccess}
         onRegisterPending={handleRegisterPending}
+        onLoginPending={handleLoginPending}
       />
     );
   }
 
-  if (authStep === 'verify' && pendingRegistration) {
-    return (
-      <VerifyEmailScreen
-        pendingId={pendingRegistration.pendingId}
-        email={pendingRegistration.email}
-        onVerified={handleVerified}
-        onBack={() => { setAuthStep('login'); setPendingRegistration(null); }}
-      />
-    );
-  }
-
-  if (authStep === 'setup') {
+  if (authStep === 'setup' || !user.vaultSetup) {
     return (
       <EncryptionKeyScreen
-        mode="setup"
         onComplete={() => {
           setUser((u) => ({ ...u, vaultSetup: true, vaultUnlocked: true }));
           setAuthStep('app');
+          bumpActionQueue();
         }}
       />
     );
   }
-
-  if (authStep === 'unlock') {
-    return (
-      <EncryptionKeyScreen
-        mode="unlock"
-        onComplete={(nextUser) => {
-          setUser(nextUser);
-          setAuthStep('app');
-        }}
-      />
-    );
-  }
-
-  if (!user.vaultUnlocked) {
-    return (
-      <EncryptionKeyScreen
-        mode="unlock"
-        onComplete={(nextUser) => {
-          setUser(nextUser);
-          setAuthStep('app');
-        }}
-      />
-    );
-  }
-
-  if (!user) return <LoginScreen authError={authError} onAuthSuccess={handleAuthSuccess} onRegisterPending={handleRegisterPending} />;
 
   const selectedId = view === 'import'
     ? (selectedFathomMeeting?.recording_id || selectedFathomMeeting?.id)
@@ -284,13 +296,22 @@ export default function App() {
         onOpenSaved={handleOpenSaved}
       />
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <div style={{
           height: 'var(--header-h)', borderBottom: '1px solid var(--navy-700)',
           display: 'flex', alignItems: 'center', padding: '0 24px', gap: 12,
           flexShrink: 0, background: 'var(--navy-900)',
         }}>
           <div style={{ flex: 1 }} />
+          <button className={`btn ${view === 'my-actions' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
+            onClick={() => setView(view === 'my-actions' ? 'welcome' : 'my-actions')}>
+            <ListChecks size={13} /> My Actions
+          </button>
+          <button className={`btn ${view === 'archive' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
+            onClick={() => setView(view === 'archive' ? 'welcome' : 'archive')}>
+            <Archive size={13} /> Archive
+          </button>
           <button className={`btn ${view === 'commitments' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
             onClick={() => setView(view === 'commitments' ? 'welcome' : 'commitments')}>
             <Target size={13} /> Commitments
@@ -350,8 +371,19 @@ export default function App() {
           </button>
         </div>
 
+        {user.vaultSetup && !user.vaultUnlocked && (
+          <VaultUnlockBanner onUnlocked={(u) => setUser(u)} />
+        )}
+
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          {view === 'commitments' ? (
+          {view === 'my-actions' ? (
+            <MyActionItems />
+          ) : view === 'archive' ? (
+            <ArchivedActionItems
+              onSelectMeeting={(id) => { setSelectedDbMeetingId(id); setSidebarTab('saved'); setView('detail'); }}
+              onChanged={bumpActionQueue}
+            />
+          ) : view === 'commitments' ? (
             <div style={{ height: '100%', overflowY: 'auto' }}>
               <CommitmentsTracker onSelectMeeting={(id) => { setSelectedDbMeetingId(id); setSidebarTab('saved'); setView('detail'); }} />
             </div>
@@ -374,8 +406,9 @@ export default function App() {
               meetingId={selectedDbMeetingId}
               folders={folders}
               onBack={() => { setView('welcome'); setSidebarTab('saved'); }}
-              onDelete={() => { loadDbMeetings(); setView('welcome'); }}
+              onDelete={() => { loadDbMeetings(); setView('welcome'); bumpActionQueue(); }}
               onFolderChange={loadDbMeetings}
+              onActionItemsChanged={bumpActionQueue}
             />
           ) : (
             <WelcomeScreen
@@ -391,6 +424,17 @@ export default function App() {
             />
           )}
         </div>
+      </div>
+
+      <ActionItemsQueue
+        refreshKey={actionQueueRefresh}
+        onSelectMeeting={(id) => {
+          setSelectedDbMeetingId(id);
+          setSidebarTab('saved');
+          setView('detail');
+          bumpActionQueue();
+        }}
+      />
       </div>
 
       {showSettings && (

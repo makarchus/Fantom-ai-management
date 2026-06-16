@@ -31,8 +31,15 @@ export function encryptMeetingRow(row, vaultKey) {
 }
 
 export function decryptMeetingRow(row, vaultKey) {
+  const {
+    title_enc: _t,
+    participants_enc: _p,
+    summary_enc: _s,
+    summary_raw_enc: _sr,
+    ...rest
+  } = row;
   return {
-    ...row,
+    ...rest,
     title: decryptString(row.title_enc, vaultKey),
     participants: decryptJson(row.participants_enc, vaultKey) || [],
     summary: row.summary_enc ? decryptString(row.summary_enc, vaultKey) : null,
@@ -58,15 +65,28 @@ export function decryptTranscriptRow(row, vaultKey) {
 export function encryptActionItemRow(row, vaultKey) {
   return {
     assignee_enc: encryptString(row.assignee, vaultKey),
+    assignee_emails_enc: row.assignee_emails?.length
+      ? encryptJson(row.assignee_emails, vaultKey)
+      : null,
     description_enc: encryptString(row.description, vaultKey),
     notes_enc: row.notes ? encryptString(row.notes, vaultKey) : null,
   };
 }
 
 export function decryptActionItemRow(row, vaultKey) {
+  const {
+    assignee_enc: _a,
+    assignee_emails_enc: _ae,
+    description_enc: _d,
+    notes_enc: _n,
+    ...rest
+  } = row;
   return {
-    ...row,
+    ...rest,
     assignee: decryptString(row.assignee_enc, vaultKey),
+    assignee_emails: row.assignee_emails_enc
+      ? (decryptJson(row.assignee_emails_enc, vaultKey) || [])
+      : [],
     description: decryptString(row.description_enc, vaultKey),
     notes: row.notes_enc ? decryptString(row.notes_enc, vaultKey) : null,
   };

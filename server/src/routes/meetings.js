@@ -3,6 +3,12 @@ import pool from '../db/pool.js';
 import { listFolders, createFolder, deleteFolderIfEmpty } from '../lib/folders.js';
 import { categorizeWithRules } from '../lib/categorizeMeeting.js';
 import { requireAuth, getUserId, getVaultKey, requireVault } from '../middleware/auth.js';
+import {
+  syncActionItemAssignments,
+  syncAssignmentFieldsFromActionItem,
+  normalizeEmailList,
+} from '../lib/actionAssignments.js';
+import { archiveActionItem, unarchiveActionItem, deleteActionItem } from '../lib/actionItemArchive.js';
 import { sendError, logError, friendlyError } from '../lib/httpErrors.js';
 import { extractActionItems } from '../lib/extractActionItems.js';
 import { persistExtraction } from '../lib/meetingItems.js';
@@ -161,7 +167,12 @@ router.get('/:id', requireVault, async (req, res) => {
     const lookupId = meeting.id;
 
     const [actionItems, nextSteps, transcriptRes] = await Promise.all([
-      pool.query('SELECT * FROM action_items WHERE meeting_id = $1 ORDER BY priority DESC, created_at', [lookupId]),
+      pool.query(
+        `SELECT * FROM action_items
+         WHERE meeting_id = $1 AND archived_at IS NULL
+         ORDER BY priority DESC, created_at`,
+        [lookupId],
+      ),
       pool.query('SELECT * FROM next_steps WHERE meeting_id = $1 ORDER BY due_date, created_at', [lookupId]),
       pool.query('SELECT * FROM transcripts WHERE meeting_id = $1', [lookupId]),
     ]);
@@ -287,42 +298,147 @@ router.post('/organize', requireVault, async (req, res) => {
 router.patch('/action-items/:id', requireVault, async (req, res) => {
   const { id } = req.params;
   const vaultKey = getVaultKey(req);
-  const { status, priority, due_date, notes, assignee, description } = req.body;
-  const sets = [];
-  const values = [];
-  let idx = 1;
+  const userId = getUserId(req);
+  const {
+    status, priority, due_date, notes, assignee, description, assignee_emails: assigneeEmails,
+  } = req.body;
 
-  if (status !== undefined) { sets.push(`status = $${idx++}`); values.push(status); }
-  if (priority !== undefined) { sets.push(`priority = $${idx++}`); values.push(priority); }
-  if (due_date !== undefined) { sets.push(`due_date = $${idx++}`); values.push(due_date); }
-  if (notes !== undefined) {
-    sets.push(`notes_enc = $${idx++}`);
-    values.push(notes ? encryptActionItemRow({ assignee: 'x', description: 'x', notes }, vaultKey).notes_enc : null);
-  }
-  if (assignee !== undefined) {
-    sets.push(`assignee_enc = $${idx++}`);
-    values.push(encryptActionItemRow({ assignee, description: 'x' }, vaultKey).assignee_enc);
-  }
-  if (description !== undefined) {
-    sets.push(`description_enc = $${idx++}`);
-    values.push(encryptActionItemRow({ assignee: 'x', description }, vaultKey).description_enc);
-  }
-
-  if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
-
-  values.push(id);
   try {
-    const { rows } = await pool.query(
-      `UPDATE action_items SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
-      values,
+    const itemRes = await pool.query(
+      `SELECT ai.*, m.user_id, m.title_enc, m.meeting_date
+       FROM action_items ai
+       JOIN meetings m ON m.id = ai.meeting_id
+       WHERE ai.id = $1`,
+      [id],
     );
-    if (!rows.length) {
-      logError('PATCH /action-items/:id', new Error('Action item not found'), { id });
+    const row = itemRes.rows[0];
+    if (!row || row.user_id !== userId) {
       return res.status(404).json({ error: 'That action item was not found. Try refreshing the page.' });
     }
-    res.json({ action_item: decryptActionItemRow(rows[0], vaultKey) });
+
+    const meeting = decryptMeetingRow(row, vaultKey);
+    const current = decryptActionItemRow(row, vaultKey);
+
+    const sets = [];
+    const values = [];
+    let idx = 1;
+
+    if (status !== undefined) { sets.push(`status = $${idx++}`); values.push(status); }
+    if (status === 'done') {
+      sets.push(`archived_at = NOW()`);
+    } else if (status !== undefined && status !== 'done') {
+      sets.push(`archived_at = NULL`);
+    }
+    if (priority !== undefined) { sets.push(`priority = $${idx++}`); values.push(priority); }
+    if (due_date !== undefined) { sets.push(`due_date = $${idx++}`); values.push(due_date || null); }
+    if (notes !== undefined) {
+      sets.push(`notes_enc = $${idx++}`);
+      values.push(notes ? encryptActionItemRow({
+        assignee: 'x', description: 'x', notes,
+      }, vaultKey).notes_enc : null);
+    }
+    if (assignee !== undefined) {
+      sets.push(`assignee_enc = $${idx++}`);
+      values.push(encryptActionItemRow({ assignee, description: 'x' }, vaultKey).assignee_enc);
+    }
+    if (description !== undefined) {
+      sets.push(`description_enc = $${idx++}`);
+      values.push(encryptActionItemRow({ assignee: 'x', description }, vaultKey).description_enc);
+    }
+    if (assigneeEmails !== undefined) {
+      const normalized = normalizeEmailList(assigneeEmails);
+      sets.push(`assignee_emails_enc = $${idx++}`);
+      values.push(normalized.length
+        ? encryptActionItemRow({
+          assignee: 'x', description: 'x', assignee_emails: normalized,
+        }, vaultKey).assignee_emails_enc
+        : null);
+    }
+
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+
+    values.push(id);
+    const { rows } = await pool.query(
+      `UPDATE action_items SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING *`,
+      values,
+    );
+
+    const updated = decryptActionItemRow(rows[0], vaultKey);
+    const emailsToSync = assigneeEmails !== undefined
+      ? normalizeEmailList(assigneeEmails)
+      : (updated.assignee_emails || []);
+
+    if (assigneeEmails !== undefined) {
+      await syncActionItemAssignments({
+        actionItemId: Number(id),
+        meetingId: row.meeting_id,
+        ownerUserId: userId,
+        ownerEmail: req.user.email,
+        ownerName: req.user.name,
+        assigneeEmails: emailsToSync,
+        item: updated,
+        meetingTitle: meeting.title,
+        meetingDate: row.meeting_date,
+        notifyNew: true,
+      });
+    } else {
+      await syncAssignmentFieldsFromActionItem(
+        Number(id),
+        updated,
+        meeting.title,
+        row.meeting_date,
+      );
+      if (status === 'done') {
+        await pool.query(
+          `UPDATE action_item_assignments SET status = 'done', archived_at = NOW(), updated_at = NOW()
+           WHERE action_item_id = $1`,
+          [id],
+        );
+      } else if (status !== undefined) {
+        await pool.query(
+          `UPDATE action_item_assignments SET archived_at = NULL, updated_at = NOW()
+           WHERE action_item_id = $1`,
+          [id],
+        );
+      }
+    }
+
+    res.json({ action_item: { ...updated, assignee_emails: emailsToSync, archived_at: rows[0].archived_at } });
   } catch (err) {
     return sendError(res, err, 'action_item_update');
+  }
+});
+
+router.post('/action-items/:id/complete', requireVault, async (req, res) => {
+  const { id } = req.params;
+  const userId = getUserId(req);
+  try {
+    await archiveActionItem(Number(id), userId);
+    res.json({ success: true });
+  } catch (err) {
+    return sendError(res, err, 'action_item_complete', err.status);
+  }
+});
+
+router.post('/action-items/:id/reopen', requireVault, async (req, res) => {
+  const { id } = req.params;
+  const userId = getUserId(req);
+  try {
+    await unarchiveActionItem(Number(id), userId);
+    res.json({ success: true });
+  } catch (err) {
+    return sendError(res, err, 'action_item_reopen', err.status);
+  }
+});
+
+router.delete('/action-items/:id', requireVault, async (req, res) => {
+  const { id } = req.params;
+  const userId = getUserId(req);
+  try {
+    await deleteActionItem(Number(id), userId);
+    res.json({ success: true });
+  } catch (err) {
+    return sendError(res, err, 'action_item_delete', err.status);
   }
 });
 

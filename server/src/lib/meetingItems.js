@@ -19,15 +19,17 @@ export async function persistExtraction(meetingId, extracted, vaultKey) {
     for (const item of extracted.action_items || []) {
       const enc = encryptActionItemRow({
         assignee: item.assignee || 'Unassigned',
+        assignee_emails: item.assignee_emails || [],
         description: item.description,
         notes: item.notes || null,
       }, vaultKey);
       await client.query(
-        `INSERT INTO action_items (meeting_id, assignee_enc, description_enc, commitment_type, priority, due_date, notes_enc)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        `INSERT INTO action_items (meeting_id, assignee_enc, assignee_emails_enc, description_enc, commitment_type, priority, due_date, notes_enc)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           meetingId,
           enc.assignee_enc,
+          enc.assignee_emails_enc,
           enc.description_enc,
           item.commitment_type || 'action',
           item.priority || 'medium',

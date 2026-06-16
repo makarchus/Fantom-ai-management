@@ -1,8 +1,13 @@
 import { useState } from 'react';
-import { LogIn, UserPlus } from 'lucide-react';
+import { Key, LogIn, UserPlus } from 'lucide-react';
 import { api } from '../lib/api.js';
 
-export default function LoginScreen({ authError, onAuthSuccess, onRegisterPending }) {
+export default function LoginScreen({
+  authError,
+  onAuthSuccess,
+  onRegisterPending,
+  onLoginPending,
+}) {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -10,6 +15,8 @@ export default function LoginScreen({ authError, onAuthSuccess, onRegisterPendin
   const [name, setName] = useState('');
   const [error, setError] = useState(authError || '');
   const [loading, setLoading] = useState(false);
+  const [showRecover, setShowRecover] = useState(false);
+  const [recoveryKey, setRecoveryKey] = useState('');
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -32,13 +39,81 @@ export default function LoginScreen({ authError, onAuthSuccess, onRegisterPendin
         onRegisterPending?.({ pendingId: result.pendingId, email: result.email });
       } else {
         const result = await api.login({ email, password });
-        onAuthSuccess?.(result);
+        onLoginPending?.({
+          pendingLoginId: result.pendingLoginId,
+          email: result.email,
+          needsEncryptionSetup: result.needsEncryptionSetup,
+        });
       }
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleRecover(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const result = await api.recoverVault({ email, encryptionKey: recoveryKey });
+      onAuthSuccess?.(result);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (showRecover) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        minHeight: '100vh', padding: 24, background: 'var(--navy-950)',
+      }}>
+        <div className="card" style={{ width: '100%', maxWidth: 400, padding: 28 }}>
+          <div style={{ textAlign: 'center', marginBottom: 20 }}>
+            <Key size={24} color="var(--indigo-light)" style={{ marginBottom: 8 }} />
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--white-soft)', marginBottom: 4 }}>
+              Recover with encryption key
+            </h1>
+            <p style={{ fontSize: 13, color: 'var(--slate-300)', lineHeight: 1.5 }}>
+              Use this only if you no longer have access to your email. Enter the private encryption key you saved at account setup.
+            </p>
+          </div>
+          <form onSubmit={handleRecover}>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--slate-200)', marginBottom: 4 }}>Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+              />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--slate-200)', marginBottom: 4 }}>Encryption key</label>
+              <input
+                type="password"
+                value={recoveryKey}
+                onChange={(e) => setRecoveryKey(e.target.value)}
+                placeholder="Your saved encryption key (UUID)"
+                required
+              />
+            </div>
+            {error && <p style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12 }}>{error}</p>}
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', marginBottom: 12 }} disabled={loading}>
+              {loading ? 'Recovering…' : 'Recover account'}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" style={{ width: '100%' }} onClick={() => { setShowRecover(false); setError(''); }}>
+              Back to sign in
+            </button>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -138,7 +213,13 @@ export default function LoginScreen({ authError, onAuthSuccess, onRegisterPendin
 
           {mode === 'register' && (
             <p style={{ fontSize: 11, color: 'var(--slate-300)', marginBottom: 12, lineHeight: 1.5 }}>
-              After sign-up, we will email you a verification code (2FA) before your account is activated.
+              After sign-up, we will email you a verification code before your account is activated.
+            </p>
+          )}
+
+          {mode === 'login' && (
+            <p style={{ fontSize: 11, color: 'var(--slate-300)', marginBottom: 12, lineHeight: 1.5 }}>
+              After password sign-in, we email a verification code every time (2FA).
             </p>
           )}
 
@@ -147,9 +228,20 @@ export default function LoginScreen({ authError, onAuthSuccess, onRegisterPendin
           )}
 
           <button type="submit" className="btn btn-primary" style={{ width: '100%', marginBottom: 16 }} disabled={loading}>
-            {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Send verification code'}
+            {loading ? 'Please wait…' : mode === 'login' ? 'Continue' : 'Send verification code'}
           </button>
         </form>
+
+        {mode === 'login' && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            style={{ width: '100%', marginBottom: 16 }}
+            onClick={() => setShowRecover(true)}
+          >
+            <Key size={13} /> Lost email access? Recover with encryption key
+          </button>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div style={{ flex: 1, height: 1, background: 'var(--navy-600)' }} />

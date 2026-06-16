@@ -20,6 +20,7 @@ const pool = new Pool({
 const resetSql = `
 DROP TABLE IF EXISTS fathom_meetings CASCADE;
 DROP TABLE IF EXISTS fathom_meeting_cache CASCADE;
+DROP TABLE IF EXISTS action_item_assignments CASCADE;
 DROP TABLE IF EXISTS action_items CASCADE;
 DROP TABLE IF EXISTS next_steps CASCADE;
 DROP TABLE IF EXISTS transcripts CASCADE;

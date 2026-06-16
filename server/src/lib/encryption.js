@@ -97,3 +97,19 @@ export function verifyVerificationCode(code, pendingId, storedHash) {
 export function generateVerificationCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
+
+export function getStorageMasterKey() {
+  const secret = process.env.ENCRYPTION_STORAGE_KEY || process.env.SESSION_SECRET;
+  if (!secret) {
+    throw new Error('ENCRYPTION_STORAGE_KEY or SESSION_SECRET must be set');
+  }
+  return scryptSync(secret, 'fantom-vault-storage', 32, SCRYPT_PARAMS);
+}
+
+export function encryptForStorage(plaintext, storageKey = getStorageMasterKey()) {
+  return encryptString(plaintext, storageKey);
+}
+
+export function decryptFromStorage(payload, storageKey = getStorageMasterKey()) {
+  return decryptString(payload, storageKey);
+}

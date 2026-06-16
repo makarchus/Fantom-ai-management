@@ -6,16 +6,27 @@ import {
   resendVerificationCode,
   setupUserEncryption,
   verifyRegistration,
+  requestLoginVerification,
+  verifyLoginCode,
+  recoverVaultAccess,
+  resendLoginCode,
 } from '../lib/users.js';
-import { unlockVault, lockVault } from '../lib/vault.js';
+import { autoUnlockVault, unlockVault } from '../lib/vault.js';
 import { deriveDataKey } from '../lib/encryption.js';
+import { linkPendingAssignmentsToUser } from '../lib/actionAssignments.js';
 
 const router = Router();
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
 function loginUser(req, res, user, extra = {}) {
+  linkPendingAssignmentsToUser(user.id, user.email).catch((err) => {
+    console.warn('[Auth] link assignments failed:', err.message);
+  });
   req.login(user, (err) => {
     if (err) return res.status(500).json({ error: err.message });
+    if (user.encryption_key_verifier) {
+      autoUnlockVault(req, user);
+    }
     res.json({
       user: formatUser(user, req),
       ...extra,
@@ -70,6 +81,22 @@ router.post('/resend-code', async (req, res) => {
   }
 });
 
+router.post('/resend-login-code', async (req, res) => {
+  const { pendingLoginId } = req.body;
+  if (!pendingLoginId) return res.status(400).json({ error: 'pendingLoginId is required' });
+
+  try {
+    const result = await resendLoginCode(pendingLoginId);
+    res.json({
+      message: 'A new sign-in code was sent.',
+      pendingLoginId: result.pendingLoginId,
+      expiresAt: result.expiresAt,
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 router.post('/setup-encryption', async (req, res) => {
   if (!req.isAuthenticated?.() || !req.user) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -85,13 +112,29 @@ router.post('/setup-encryption', async (req, res) => {
       encryptionKey,
       user: formatUser(user, req),
       warning:
-        'Save this private encryption key in a secure place. Without it, your data cannot be recovered — not even by platform administrators.',
+        'Save this private encryption key in a secure place. You only need it to recover your data if you lose email access.',
     });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
 
+/** Recovery only — for users without email access who have their encryption key. */
+router.post('/recover-vault', async (req, res) => {
+  const { email, encryptionKey } = req.body;
+  if (!email?.trim() || !encryptionKey?.trim()) {
+    return res.status(400).json({ error: 'email and encryptionKey are required' });
+  }
+
+  try {
+    const user = await recoverVaultAccess(email, encryptionKey);
+    loginUser(req, res, user);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+/** Legacy: unlock with encryption key while signed in (e.g. old accounts before stored key). */
 router.post('/unlock-vault', async (req, res) => {
   if (!req.isAuthenticated?.() || !req.user) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -104,19 +147,16 @@ router.post('/unlock-vault', async (req, res) => {
 
   try {
     unlockVault(req, encryptionKey, req.user);
+    const { storeEncryptionKeyForUser } = await import('../lib/users.js');
+    await storeEncryptionKeyForUser(req.user.id, encryptionKey);
     res.json({ success: true, user: formatUser(req.user, req) });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
 
-router.post('/lock-vault', (req, res) => {
-  lockVault(req);
-  res.json({ success: true, user: formatUser(req.user, req) });
-});
-
 router.post('/login', (req, res, next) => {
-  passport.authenticate('local', (err, user, info) => {
+  passport.authenticate('local', async (err, user, info) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!user) return res.status(401).json({ error: info?.message || 'Invalid email or password' });
 
@@ -124,11 +164,35 @@ router.post('/login', (req, res, next) => {
       return res.status(403).json({ error: 'Email address is not verified' });
     }
 
+    try {
+      const pending = await requestLoginVerification(user);
+      res.status(202).json({
+        message: 'Sign-in verification code sent to your email.',
+        pendingLoginId: pending.pendingLoginId,
+        email: pending.email,
+        expiresAt: pending.expiresAt,
+        needsEncryptionSetup: pending.needsEncryptionSetup,
+      });
+    } catch (loginErr) {
+      res.status(loginErr.status || 500).json({ error: loginErr.message });
+    }
+  })(req, res, next);
+});
+
+router.post('/verify-login', async (req, res) => {
+  const { pendingLoginId, code } = req.body;
+  if (!pendingLoginId || !code) {
+    return res.status(400).json({ error: 'pendingLoginId and code are required' });
+  }
+
+  try {
+    const user = await verifyLoginCode({ pendingLoginId, code });
     loginUser(req, res, user, {
       needsEncryptionSetup: !user.encryption_key_verifier,
-      needsVaultUnlock: Boolean(user.encryption_key_verifier),
     });
-  })(req, res, next);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 router.get('/google', (req, res, next) => {
@@ -141,17 +205,39 @@ router.get('/google', (req, res, next) => {
 router.get('/google/callback', (req, res, next) => {
   passport.authenticate('google', {
     failureRedirect: `${CLIENT_URL}?auth=failed`,
-  })(req, res, () => {
-    if (!req.user?.encryption_key_verifier) {
-      return res.redirect(`${CLIENT_URL}?auth=google&needsEncryptionSetup=1`);
+    session: false,
+  }, async (err, user) => {
+    if (err || !user) {
+      return res.redirect(`${CLIENT_URL}?auth=failed`);
     }
-    res.redirect(`${CLIENT_URL}?auth=google&needsVaultUnlock=1`);
-  });
+
+    try {
+      const pending = await requestLoginVerification(user);
+      const params = new URLSearchParams({
+        loginVerify: '1',
+        pendingLoginId: pending.pendingLoginId,
+        email: pending.email,
+      });
+      if (pending.needsEncryptionSetup) params.set('needsEncryptionSetup', '1');
+      res.redirect(`${CLIENT_URL}?${params.toString()}`);
+    } catch (loginErr) {
+      console.error('[Google login 2FA]', loginErr.message);
+      res.redirect(`${CLIENT_URL}?auth=failed`);
+    }
+  })(req, res, next);
 });
 
-router.get('/me', (req, res) => {
+router.get('/me', async (req, res) => {
   if (!req.isAuthenticated?.() || !req.user) {
     return res.json({ user: null });
+  }
+  try {
+    await linkPendingAssignmentsToUser(req.user.id, req.user.email);
+    if (req.user.encryption_key_verifier && !req.session?.vaultKeyB64) {
+      autoUnlockVault(req, req.user);
+    }
+  } catch (err) {
+    console.warn('[Auth] link assignments on /me failed:', err.message);
   }
   res.json({ user: formatUser(req.user, req) });
 });

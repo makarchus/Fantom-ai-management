@@ -18,6 +18,7 @@ import settingsRoutes from './routes/settings.js';
 import fathomRoutes from './routes/fathom.js';
 import meetingsRoutes from './routes/meetings.js';
 import processRoutes from './routes/process.js';
+import actionItemsRoutes from './routes/actionItems.js';
 import { logError, friendlyError } from './lib/httpErrors.js';
 
 const app = express();
@@ -56,6 +57,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/fathom', fathomRoutes);
 app.use('/api/meetings', meetingsRoutes);
 app.use('/api/process', processRoutes);
+app.use('/api/action-items', actionItemsRoutes);
 
 // Unknown API routes
 app.use('/api', (req, res) => {

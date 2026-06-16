@@ -1,115 +1,89 @@
 # Meeting Intelligence
 
-AI-powered meeting tracker that connects to **Fathom** via Microsoft SSO, extracts action items and commitments by person, and stores everything in a local PostgreSQL database.
+AI-powered meeting tracker that connects to **Fathom**, extracts action items and commitments by person, and stores everything in an **encrypted** local PostgreSQL database.
+
+## Security model
+
+- **Email 2FA on every sign-in** — password or Google OAuth, then a 6-digit code emailed each time
+- **Encrypted at rest** — Fathom API keys, meeting summaries, action items, and transcripts use AES-256-GCM
+- **Recovery key** — a private UUID is generated once at signup; save it only if you might lose email access
 
 ## Architecture
 
 ```
 meeting-intelligence/
 ├── client/          React frontend (Vite, port 5173)
-└── server/          Express API (Node.js, port 3001)
-    ├── .env         ← configure this
-    └── src/
-        ├── routes/
-        │   ├── fathom.js     Fathom MCP bridge (via Claude AI)
-        │   ├── meetings.js   CRUD for saved meetings
-        │   └── process.js    AI extraction pipeline
-        └── db/
-            ├── pool.js       PostgreSQL connection
-            └── migrate.js    Schema migrations
+├── server/          Express API (Node.js, port 3001)
+│   ├── .env         ← configure this
+│   └── src/
+│       ├── lib/encryption.js   User vault crypto
+│       ├── routes/auth.js      Register, verify, sign-in 2FA
+│       └── db/migrate.js       Schema migrations
+└── docs/GMAIL_SETUP.md        Gmail App Password setup
 ```
 
 ## Prerequisites
 
 - Node.js 18+
 - PostgreSQL (local, port 5432)
-- Anthropic API key
-- Fathom account (connected via Microsoft SSO)
+- Gmail account with App Password (for registration emails) — see [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md)
+- Fathom account (optional, for API sync)
+- Anthropic API key (optional, AI fallback)
 
 ## Setup
 
 ### 1. Configure environment
 
-Edit `server/.env`:
-
-```env
-# PostgreSQL
-PGHOST=localhost
-PGPORT=5432
-PGDATABASE=meeting_intelligence
-PGUSER=postgres
-PGPASSWORD=your_password_here
-
-# Fathom API (Fathom → Settings → API Access)
-FATHOM_API_KEY=your_fathom_api_key_here
-
-# Optional: only needed if Fathom has no action items and summary parsing fails
-# ANTHROPIC_API_KEY=sk-ant-...
-
-PORT=3001
+```bash
+cp server/sample.env server/.env
 ```
 
-### 2. Create the database
+Edit `server/.env` — at minimum set PostgreSQL, Gmail SMTP, and `SESSION_SECRET`. See `server/sample.env` for all variables.
+
+**Gmail for email verification:** follow [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md) to create a Google App Password and set `SMTP_*` variables.
+
+### 2. Install and initialize
 
 ```bash
-psql -U postgres -c "CREATE DATABASE meeting_intelligence;"
+./setup.sh          # installs deps, creates DB if needed, runs migrations
+# or fresh start (deletes all data):
+npm run db:reset
 ```
 
-### 3. Run migrations
+### 3. Start the app
 
 ```bash
-cd server && node src/db/migrate.js
-```
-
-### 4. Install dependencies
-
-```bash
-# From root
-npm install
-cd server && npm install
-cd ../client && npm install
-```
-
-### 5. Start the app
-
-```bash
-# From root — starts both server and client
 npm run dev
 ```
 
 Open **http://localhost:5173**
 
-## How It Works
+## Sign-in flow
 
-### Fathom Connection
-The server connects to Fathom via its REST API using `FATHOM_API_KEY`. Generate a key in Fathom → Settings → API Access.
+1. **Create account** — email + password, then verify with a 6-digit email code
+2. **Save recovery key** — optional UUID shown once; only needed if you lose email access
+3. **Sign in** — email + password (or Google), then enter the email verification code every time
 
-### Import Flow
-1. Browse Fathom meetings in the sidebar
-2. Click a meeting → "Import & Process Meeting"
-3. Server fetches summary and action items from Fathom
-4. Action items are imported with assignee, description, and priority
-5. All data saved to PostgreSQL
+## Fathom connection
 
-For **Paste Summary** (manual import), action items are parsed from the summary markdown. `ANTHROPIC_API_KEY` is optional — only used as a fallback if Fathom didn't provide items and parsing finds none.
+Per-user Fathom API keys are stored **encrypted** in Settings after sign-in.
 
-### Database Schema
+Generate a key in Fathom → Settings → API Access. See [Fathom API quickstart](https://developers.fathom.ai/quickstart).
 
-| Table | Purpose |
-|-------|---------|
-| `meetings` | Meeting metadata + AI summary |
-| `action_items` | Per-person tasks/commitments |
-| `next_steps` | Follow-up items |
-| `transcripts` | Full transcript history |
-| `commitments_view` | Cross-meeting commitment view |
+## Database reset
 
-### Commitments Tracker
-The **Commitments Tracker** (top right button) shows all commitments across every processed meeting — filterable by status and overdue items — so nothing falls through the cracks.
+To wipe all users, meetings, and categories and start fresh:
+
+```bash
+npm run db:reset
+```
 
 ## Troubleshooting
 
-**"Fathom connection failed"** — Ensure `FATHOM_API_KEY` is set in `server/.env` and valid.
+**Verification email not sent** — Check `SMTP_*` in `server/.env` and [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md).
 
-**"No meetings found in Fathom"** — Confirm your Fathom account has recorded meetings and the API key has access.
+**Lost email access** — Use “Recover with encryption key” on the sign-in screen with your saved recovery key.
 
-**PostgreSQL connection refused** — Check that Postgres is running and your credentials in `.env` match.
+**PostgreSQL connection refused** — Ensure Postgres is running and credentials in `.env` match.
+
+**Fathom sync failed** — Add your Fathom API key in Settings after signing in.

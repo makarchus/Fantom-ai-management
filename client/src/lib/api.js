@@ -68,8 +68,10 @@ export const api = {
   resendCode: (body) => request('/auth/resend-code', { method: 'POST', body }),
   setupEncryption: () => request('/auth/setup-encryption', { method: 'POST' }),
   unlockVault: (body) => request('/auth/unlock-vault', { method: 'POST', body }),
-  lockVault: () => request('/auth/lock-vault', { method: 'POST' }),
   login: (body) => request('/auth/login', { method: 'POST', body }),
+  verifyLogin: (body) => request('/auth/verify-login', { method: 'POST', body }),
+  resendLoginCode: (body) => request('/auth/resend-login-code', { method: 'POST', body }),
+  recoverVault: (body) => request('/auth/recover-vault', { method: 'POST', body }),
   logout: () => request('/auth/logout', { method: 'POST' }),
   googleLoginUrl: () => `${BASE}/auth/google`,
 
@@ -102,6 +104,18 @@ export const api = {
   getAllCommitments: () => request('/meetings/commitments/all'),
 
   updateActionItem: (id, body) => request(`/meetings/action-items/${id}`, { method: 'PATCH', body }),
+  completeActionItem: (id) => request(`/meetings/action-items/${id}/complete`, { method: 'POST' }),
+  reopenActionItem: (id) => request(`/meetings/action-items/${id}/reopen`, { method: 'POST' }),
+  deleteActionItem: (id) => request(`/meetings/action-items/${id}`, { method: 'DELETE' }),
+
+  getAssignedActionItems: () => request('/action-items/assigned'),
+  getActionItemsQueue: () => request('/action-items/queue'),
+  getArchivedActionItems: () => request('/action-items/archive'),
+  getActionItemEmailSuggestions: () => request('/action-items/email-suggestions'),
+  getActionItemComments: (actionItemId) => request(`/action-items/${actionItemId}/comments`),
+  addActionItemComment: (actionItemId, body) =>
+    request(`/action-items/${actionItemId}/comments`, { method: 'POST', body: { body } }),
+  updateAssignedActionItem: (id, body) => request(`/action-items/assigned/${id}`, { method: 'PATCH', body }),
   updateNextStep: (id, body) => request(`/meetings/next-steps/${id}`, { method: 'PATCH', body }),
 
   processMeeting: (body) => request('/process/meeting', { method: 'POST', body }),

@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle2, Circle, ChevronDown, ChevronRight, User, Calendar, Flag, Edit2, Save, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, User, Calendar, Flag, Edit2, Save, X, Mail, CheckCircle2, Trash2, Circle } from 'lucide-react';
 import { api } from '../lib/api.js';
+import { NotesEditor, NotesDisplay } from './NotesEditor.jsx';
+import AssigneeEmailPicker from './AssigneeEmailPicker.jsx';
+import ActionItemComments from './ActionItemComments.jsx';
 
 const PRIORITY_COLORS = {
   high: { color: 'var(--red)', bg: 'var(--red-dim)', label: 'High' },
@@ -15,64 +18,118 @@ const TYPE_COLORS = {
   decision: { color: 'var(--purple)', bg: 'var(--purple-dim)', label: 'Decision' },
 };
 
-function ActionItem({ item, onUpdate }) {
+function formatDateForInput(value) {
+  if (!value) return '';
+  const str = typeof value === 'string' ? value : (value instanceof Date ? value.toISOString() : String(value));
+  const match = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
+}
+
+function formatDateForDisplay(value) {
+  const input = formatDateForInput(value);
+  if (!input) return '';
+  const [year, month, day] = input.split('-');
+  return `${month}/${day}/${year}`;
+}
+
+function groupKey(item) {
+  const emails = item.assignee_emails || [];
+  if (emails.length) return emails[0];
+  return item.assignee || 'Unassigned';
+}
+
+function ActionItem({ item, onUpdate, onRemove, onChanged }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({});
   const [saving, setSaving] = useState(false);
+  const [removingEmail, setRemovingEmail] = useState(null);
+  const [completing, setCompleting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const isDone = item.status === 'done';
+  async function markComplete() {
+    if (!confirm('Mark this action item complete? It will move to the Archive with its full progress history.')) return;
+    setCompleting(true);
+    try {
+      await api.completeActionItem(item.id);
+      onRemove?.(item.id);
+      onChanged?.();
+    } finally {
+      setCompleting(false);
+    }
+  }
 
-  async function toggleDone() {
-    const newStatus = isDone ? 'pending' : 'done';
-    await api.updateActionItem(item.id, { status: newStatus });
-    onUpdate({ ...item, status: newStatus });
+  async function handleDelete() {
+    if (!confirm('Delete this action item permanently? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      await api.deleteActionItem(item.id);
+      onRemove?.(item.id);
+      onChanged?.();
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function startEdit() {
-    setDraft({ description: item.description, priority: item.priority, due_date: item.due_date || '', notes: item.notes || '' });
+    setDraft({
+      description: item.description,
+      priority: item.priority,
+      due_date: formatDateForInput(item.due_date),
+      notes: item.notes || '',
+      assignee_emails: item.assignee_emails || [],
+    });
     setEditing(true);
   }
 
   async function saveEdit() {
     setSaving(true);
     try {
-      await api.updateActionItem(item.id, draft);
-      onUpdate({ ...item, ...draft });
+      const { action_item: updated } = await api.updateActionItem(item.id, draft);
+      onUpdate(updated);
+      onChanged?.();
       setEditing(false);
     } finally {
       setSaving(false);
     }
   }
 
+  async function removeAssignee(email) {
+    if (!confirm(`Remove ${email} from this action item? They will be notified it is no longer required.`)) return;
+    setRemovingEmail(email);
+    try {
+      const nextEmails = (item.assignee_emails || []).filter((e) => e !== email);
+      const { action_item: updated } = await api.updateActionItem(item.id, { assignee_emails: nextEmails });
+      onUpdate(updated);
+      onChanged?.();
+    } finally {
+      setRemovingEmail(null);
+    }
+  }
+
   const p = PRIORITY_COLORS[item.priority] || PRIORITY_COLORS.medium;
   const t = TYPE_COLORS[item.commitment_type] || TYPE_COLORS.action;
+  const emails = item.assignee_emails || [];
 
   return (
     <div style={{
       padding: '12px 14px',
       borderBottom: '1px solid var(--navy-700)',
-      opacity: isDone ? 0.6 : 1,
-      transition: 'opacity 0.2s',
     }}>
       {!editing ? (
         <div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <button
-              onClick={toggleDone}
-              style={{ flexShrink: 0, marginTop: 2, color: isDone ? 'var(--green)' : 'var(--slate-400)' }}
-            >
-              {isDone ? <CheckCircle2 size={16} /> : <Circle size={16} />}
-            </button>
             <div style={{ flex: 1 }}>
               <div style={{
                 fontSize: 13,
-                color: isDone ? 'var(--slate-300)' : 'var(--white-soft)',
-                textDecoration: isDone ? 'line-through' : 'none',
+                color: 'var(--white-soft)',
                 lineHeight: 1.4,
               }}>
                 {item.description}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
+                {item.status === 'in_progress' && (
+                  <span className="badge badge-amber" style={{ fontSize: 10 }}>In progress</span>
+                )}
                 <span className="badge" style={{ background: t.bg, color: t.color, fontSize: 10 }}>
                   {t.label}
                 </span>
@@ -81,23 +138,79 @@ function ActionItem({ item, onUpdate }) {
                 </span>
                 {item.due_date && (
                   <span className="badge badge-slate" style={{ fontSize: 10 }}>
-                    <Calendar size={9} />{item.due_date}
+                    <Calendar size={9} />{formatDateForDisplay(item.due_date)}
                   </span>
                 )}
               </div>
-              {item.notes && (
-                <div style={{ fontSize: 11, color: 'var(--slate-300)', marginTop: 6, fontStyle: 'italic' }}>
-                  {item.notes}
+              {emails.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--slate-300)', marginBottom: 6 }}>
+                    Assigned to
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {emails.map((email) => (
+                      <span
+                        key={email}
+                        className="badge badge-indigo"
+                        style={{
+                          fontSize: 11,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          paddingRight: 6,
+                        }}
+                      >
+                        <Mail size={10} />
+                        {email}
+                        <button
+                          type="button"
+                          title={`Remove ${email}`}
+                          disabled={removingEmail === email}
+                          onClick={() => removeAssignee(email)}
+                          style={{
+                            color: 'inherit',
+                            opacity: removingEmail === email ? 0.5 : 0.85,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
+              <NotesDisplay notes={item.notes} />
+              <ActionItemComments actionItemId={item.id} compact />
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={startEdit} style={{ flexShrink: 0, padding: '3px 6px' }}>
-              <Edit2 size={12} />
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+              <button className="btn btn-ghost btn-sm" onClick={startEdit} style={{ padding: '3px 6px' }}>
+                <Edit2 size={12} />
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={markComplete}
+                disabled={completing}
+                title="Mark complete and archive"
+                style={{ padding: '3px 6px', color: 'var(--green)' }}
+              >
+                <CheckCircle2 size={12} />
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={handleDelete}
+                disabled={deleting}
+                title="Delete action item"
+                style={{ padding: '3px 6px', color: 'var(--red)' }}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
           </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <textarea
             value={draft.description}
             onChange={(e) => setDraft({ ...draft, description: e.target.value })}
@@ -117,17 +230,20 @@ function ActionItem({ item, onUpdate }) {
               <label>Due Date</label>
               <input
                 type="date"
-                value={draft.due_date}
+                value={formatDateForInput(draft.due_date)}
                 onChange={(e) => setDraft({ ...draft, due_date: e.target.value })}
               />
             </div>
           </div>
+          <AssigneeEmailPicker
+            emails={draft.assignee_emails}
+            onChange={(assignee_emails) => setDraft({ ...draft, assignee_emails })}
+          />
           <div>
-            <label>Notes</label>
-            <input
+            <label style={{ fontSize: 12, marginBottom: 6, display: 'block' }}>Notes</label>
+            <NotesEditor
               value={draft.notes}
-              onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-              placeholder="Additional context..."
+              onChange={(notes) => setDraft({ ...draft, notes })}
             />
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -145,7 +261,7 @@ function ActionItem({ item, onUpdate }) {
   );
 }
 
-export default function ActionItemsPanel({ actionItems: initialItems, nextSteps: initialSteps }) {
+export default function ActionItemsPanel({ actionItems: initialItems, nextSteps: initialSteps, onChanged }) {
   const [items, setItems] = useState(initialItems || []);
   const [steps, setSteps] = useState(initialSteps || []);
   const [collapsed, setCollapsed] = useState({});
@@ -159,10 +275,13 @@ export default function ActionItemsPanel({ actionItems: initialItems, nextSteps:
     setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
   }
 
-  // Group by assignee
+  function removeItem(id) {
+    setItems((prev) => prev.filter((i) => i.id !== id));
+  }
+
   const byPerson = {};
   for (const item of items) {
-    const person = item.assignee || 'Unassigned';
+    const person = groupKey(item);
     if (!byPerson[person]) byPerson[person] = [];
     byPerson[person].push(item);
   }
@@ -177,7 +296,6 @@ export default function ActionItemsPanel({ actionItems: initialItems, nextSteps:
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Action Items by Person */}
       <div>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--slate-100)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
           <User size={14} color="var(--indigo-light)" />
@@ -190,8 +308,9 @@ export default function ActionItemsPanel({ actionItems: initialItems, nextSteps:
         ) : (
           people.map((person) => {
             const personItems = byPerson[person];
-            const doneCount = personItems.filter((i) => i.status === 'done').length;
+            const progressCount = personItems.filter((i) => i.status === 'in_progress').length;
             const isCollapsed = collapsed[person];
+            const isEmail = person.includes('@');
 
             return (
               <div key={person} className="card" style={{ marginBottom: 10, overflow: 'hidden' }}>
@@ -213,12 +332,12 @@ export default function ActionItemsPanel({ actionItems: initialItems, nextSteps:
                     fontSize: 12, fontWeight: 700, color: 'var(--indigo-light)',
                     flexShrink: 0,
                   }}>
-                    {person[0]?.toUpperCase() || '?'}
+                    {isEmail ? <Mail size={12} /> : (person[0]?.toUpperCase() || '?')}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--white-soft)' }}>{person}</div>
                     <div style={{ fontSize: 11, color: 'var(--slate-300)' }}>
-                      {doneCount}/{personItems.length} completed
+                      {personItems.filter((i) => i.status === 'in_progress').length} in progress · {personItems.length} active
                     </div>
                   </div>
                   <div style={{
@@ -229,7 +348,7 @@ export default function ActionItemsPanel({ actionItems: initialItems, nextSteps:
                     marginRight: 8,
                   }}>
                     <div style={{
-                      width: `${personItems.length ? (doneCount / personItems.length) * 100 : 0}%`,
+                      width: `${personItems.length ? (progressCount / personItems.length) * 100 : 0}%`,
                       height: '100%',
                       background: 'var(--green)',
                       borderRadius: 2,
@@ -240,7 +359,7 @@ export default function ActionItemsPanel({ actionItems: initialItems, nextSteps:
                 </button>
 
                 {!isCollapsed && personItems.map((item) => (
-                  <ActionItem key={item.id} item={item} onUpdate={updateItem} />
+                  <ActionItem key={item.id} item={item} onUpdate={updateItem} onRemove={removeItem} onChanged={onChanged} />
                 ))}
               </div>
             );
@@ -248,7 +367,6 @@ export default function ActionItemsPanel({ actionItems: initialItems, nextSteps:
         )}
       </div>
 
-      {/* Next Steps */}
       {steps.length > 0 && (
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--slate-100)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>

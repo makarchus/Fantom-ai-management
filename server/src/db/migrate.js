@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS action_items (
   id               SERIAL PRIMARY KEY,
   meeting_id       TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
   assignee_enc     TEXT NOT NULL,
+  assignee_emails_enc TEXT,
   description_enc  TEXT NOT NULL,
   due_date         DATE,
   priority         TEXT CHECK (priority IN ('high', 'medium', 'low')) DEFAULT 'medium',
@@ -131,6 +132,58 @@ CREATE TABLE IF NOT EXISTS action_items (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS action_item_assignments (
+  id                SERIAL PRIMARY KEY,
+  action_item_id    INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
+  meeting_id        TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  owner_user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  assignee_email    TEXT NOT NULL,
+  assignee_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  description       TEXT NOT NULL,
+  notes             TEXT,
+  meeting_title     TEXT NOT NULL,
+  meeting_date      TIMESTAMPTZ,
+  priority          TEXT DEFAULT 'medium',
+  status            TEXT DEFAULT 'pending',
+  due_date          DATE,
+  commitment_type   TEXT DEFAULT 'action',
+  notified_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (action_item_id, assignee_email)
+);
+CREATE INDEX IF NOT EXISTS idx_action_item_assignments_assignee_email
+  ON action_item_assignments (assignee_email);
+CREATE INDEX IF NOT EXISTS idx_action_item_assignments_assignee_user
+  ON action_item_assignments (assignee_user_id);
+
+ALTER TABLE action_items ADD COLUMN IF NOT EXISTS assignee_emails_enc TEXT;
+ALTER TABLE action_items ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ALTER TABLE action_item_assignments ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS encryption_key_stored_enc TEXT;
+
+CREATE TABLE IF NOT EXISTS pending_logins (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash     TEXT NOT NULL,
+  attempts      INTEGER DEFAULT 0,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pending_logins_user ON pending_logins (user_id);
+
+CREATE TABLE IF NOT EXISTS action_item_comments (
+  id              SERIAL PRIMARY KEY,
+  action_item_id  INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
+  author_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  author_name     TEXT,
+  author_email    TEXT NOT NULL,
+  body            TEXT NOT NULL,
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_action_item_comments_item
+  ON action_item_comments (action_item_id, created_at);
 
 DROP TRIGGER IF EXISTS action_items_updated_at ON action_items;
 CREATE TRIGGER action_items_updated_at

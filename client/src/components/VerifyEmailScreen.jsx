@@ -2,18 +2,31 @@ import { useState } from 'react';
 import { Mail, RefreshCw } from 'lucide-react';
 import { api } from '../lib/api.js';
 
-export default function VerifyEmailScreen({ pendingId, email, onVerified, onBack }) {
+export default function VerifyEmailScreen({
+  mode = 'register',
+  pendingId,
+  pendingLoginId,
+  email,
+  onVerified,
+  onPendingLoginIdChange,
+  onBack,
+}) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
+  const [loginPendingId, setLoginPendingId] = useState(pendingLoginId);
+
+  const isLogin = mode === 'login';
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const result = await api.verifyEmail({ pendingId, code });
+      const result = isLogin
+        ? await api.verifyLogin({ pendingLoginId: loginPendingId, code })
+        : await api.verifyEmail({ pendingId, code });
       onVerified?.(result);
     } catch (err) {
       setError(err.message);
@@ -26,7 +39,13 @@ export default function VerifyEmailScreen({ pendingId, email, onVerified, onBack
     setResending(true);
     setError('');
     try {
-      await api.resendCode({ pendingId });
+      if (isLogin) {
+        const result = await api.resendLoginCode({ pendingLoginId: loginPendingId });
+        setLoginPendingId(result.pendingLoginId);
+        onPendingLoginIdChange?.(result.pendingLoginId);
+      } else {
+        await api.resendCode({ pendingId });
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -48,7 +67,7 @@ export default function VerifyEmailScreen({ pendingId, email, onVerified, onBack
             <Mail size={22} color="var(--indigo-light)" />
           </div>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--white-soft)', marginBottom: 4 }}>
-            Verify your email
+            {isLogin ? 'Verify sign-in' : 'Verify your email'}
           </h1>
           <p style={{ fontSize: 13, color: 'var(--slate-300)', lineHeight: 1.5 }}>
             We sent a 6-digit code to <strong style={{ color: 'var(--white-soft)' }}>{email}</strong>
@@ -75,7 +94,7 @@ export default function VerifyEmailScreen({ pendingId, email, onVerified, onBack
           {error && <p style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12 }}>{error}</p>}
 
           <button type="submit" className="btn btn-primary" style={{ width: '100%', marginBottom: 12 }} disabled={loading}>
-            {loading ? 'Verifying…' : 'Verify & Continue'}
+            {loading ? 'Verifying…' : isLogin ? 'Verify & Sign In' : 'Verify & Continue'}
           </button>
         </form>
 

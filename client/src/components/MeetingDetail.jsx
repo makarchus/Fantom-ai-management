@@ -12,7 +12,7 @@ const TABS = [
   { id: 'transcript', label: 'Transcript', icon: FileText },
 ];
 
-export default function MeetingDetail({ meetingId, folders, onBack, onDelete, onFolderChange }) {
+export default function MeetingDetail({ meetingId, folders, onBack, onDelete, onFolderChange, onActionItemsChanged }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('summary');
@@ -184,7 +184,11 @@ export default function MeetingDetail({ meetingId, folders, onBack, onDelete, on
         )}
         {activeTab === 'actions' && (
           <div className="fade-in">
-            <ActionItemsPanel actionItems={action_items} nextSteps={next_steps} />
+            <ActionItemsPanel
+              actionItems={action_items}
+              nextSteps={next_steps}
+              onChanged={onActionItemsChanged}
+            />
           </div>
         )}
         {activeTab === 'transcript' && (
