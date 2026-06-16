@@ -1,6 +1,9 @@
 import pool from '../db/pool.js';
 import { categorizeWithRules } from './categorizeMeeting.js';
 import { DEFAULT_FOLDERS } from './folders.js';
+import { decryptFathomMeetingRow, encryptFathomMeetingRow } from './dataCrypto.js';
+import { encryptString } from './encryption.js';
+import { getUserSecrets } from './userSecrets.js';
 
 const FATHOM_API_BASE = 'https://api.fathom.ai/external/v1';
 const PAGE_DELAY_MS = 1200;
@@ -114,16 +117,12 @@ function mapFathomItem(m) {
 
 const folderNames = Object.fromEntries(DEFAULT_FOLDERS.map((f) => [f.id, f.name]));
 
-export async function getRecorderEmailForUser(userId) {
-  const { rows } = await pool.query(
-    'SELECT email, fathom_recorder_email FROM users WHERE id = $1',
-    [userId],
-  );
-  const user = rows[0];
-  return user?.fathom_recorder_email?.trim() || user?.email?.trim() || null;
+export async function getRecorderEmailForUser(userId, vaultKey) {
+  const secrets = await getUserSecrets(userId, vaultKey);
+  return secrets.fathomRecorderEmail?.trim() || null;
 }
 
-export async function listFathomMeetingsFromDb(userId) {
+export async function listFathomMeetingsFromDb(userId, vaultKey) {
   const { rows } = await pool.query(
     `SELECT fm.*, f.name AS folder_name, f.sort_order AS folder_sort_order,
             m.id AS saved_meeting_id, m.processed_at AS saved_processed_at
@@ -136,31 +135,42 @@ export async function listFathomMeetingsFromDb(userId) {
     [userId],
   );
 
-  return rows.map((row) => ({
-    id: row.recording_id,
-    recording_id: row.recording_id,
-    title: row.title,
-    meeting_date: row.meeting_date,
-    started_at: row.meeting_date,
-    date: row.meeting_date,
-    duration_secs: row.duration_secs,
-    participants: row.participants,
-    default_summary: row.summary ? { markdown_formatted: row.summary } : null,
-    action_items: row.action_items,
-    folder_id: row.folder_id,
-    folder_name: row.folder_name || folderNames[row.folder_id] || 'Uncategorized',
-    category: row.category,
-    category_source: row.category_source,
-    folder_locked: row.folder_locked,
-    synced_at: row.synced_at,
-    is_imported: Boolean(row.saved_meeting_id),
-    saved_meeting_id: row.saved_meeting_id || null,
-    saved_processed_at: row.saved_processed_at || null,
-  }));
+  return rows.map((row) => {
+    const decrypted = decryptFathomMeetingRow(row, vaultKey);
+    return {
+      id: row.recording_id,
+      recording_id: row.recording_id,
+      title: decrypted.title,
+      meeting_date: row.meeting_date,
+      started_at: row.meeting_date,
+      date: row.meeting_date,
+      duration_secs: row.duration_secs,
+      participants: decrypted.participants,
+      default_summary: decrypted.summary ? { markdown_formatted: decrypted.summary } : null,
+      action_items: decrypted.action_items,
+      folder_id: row.folder_id,
+      folder_name: row.folder_name || folderNames[row.folder_id] || 'Uncategorized',
+      category: row.category,
+      category_source: row.category_source,
+      folder_locked: row.folder_locked,
+      synced_at: row.synced_at,
+      is_imported: Boolean(row.saved_meeting_id),
+      saved_meeting_id: row.saved_meeting_id || null,
+      saved_processed_at: row.saved_processed_at || null,
+    };
+  });
 }
 
 export async function syncFathomMeetingsForUser(userId, apiKey, options = {}) {
-  const recorderEmail = options.recorderEmail || await getRecorderEmailForUser(userId);
+  const vaultKey = options.vaultKey;
+  if (!vaultKey) {
+    const err = new Error('Vault locked. Enter your private encryption key to continue.');
+    err.status = 403;
+    err.code = 'VAULT_LOCKED';
+    throw err;
+  }
+
+  const recorderEmail = options.recorderEmail || await getRecorderEmailForUser(userId, vaultKey);
   if (!recorderEmail) {
     const err = new Error('Could not determine your Fathom recorder email. Add it in Settings.');
     err.status = 400;
@@ -200,28 +210,30 @@ export async function syncFathomMeetingsForUser(userId, apiKey, options = {}) {
         categorySource = cat.source;
       }
 
+      const encrypted = encryptFathomMeetingRow(item, vaultKey);
+
       await client.query(
         `INSERT INTO fathom_meetings (
-          user_id, recording_id, title, meeting_date, duration_secs,
-          participants, summary, action_items, raw_payload,
+          user_id, recording_id, title_enc, meeting_date, duration_secs,
+          participants_enc, summary_enc, action_items_enc, raw_payload_enc,
           folder_id, category, category_source, folder_locked, synced_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
         ON CONFLICT (user_id, recording_id) DO UPDATE SET
-          title = EXCLUDED.title,
+          title_enc = EXCLUDED.title_enc,
           meeting_date = EXCLUDED.meeting_date,
           duration_secs = EXCLUDED.duration_secs,
-          participants = EXCLUDED.participants,
-          summary = EXCLUDED.summary,
-          action_items = EXCLUDED.action_items,
-          raw_payload = EXCLUDED.raw_payload,
+          participants_enc = EXCLUDED.participants_enc,
+          summary_enc = EXCLUDED.summary_enc,
+          action_items_enc = EXCLUDED.action_items_enc,
+          raw_payload_enc = EXCLUDED.raw_payload_enc,
           synced_at = NOW(),
           folder_id = CASE WHEN fathom_meetings.folder_locked THEN fathom_meetings.folder_id ELSE EXCLUDED.folder_id END,
           category = CASE WHEN fathom_meetings.folder_locked THEN fathom_meetings.category ELSE EXCLUDED.category END,
           category_source = CASE WHEN fathom_meetings.folder_locked THEN fathom_meetings.category_source ELSE EXCLUDED.category_source END`,
         [
-          userId, item.recording_id, item.title, item.meeting_date, item.duration_secs,
-          JSON.stringify(item.participants), item.summary, JSON.stringify(item.action_items),
-          JSON.stringify(item.raw_payload), folderId, category, categorySource, folderLocked,
+          userId, item.recording_id, encrypted.title_enc, item.meeting_date, item.duration_secs,
+          encrypted.participants_enc, encrypted.summary_enc, encrypted.action_items_enc,
+          encrypted.raw_payload_enc, folderId, category, categorySource, folderLocked,
         ],
       );
     }
@@ -248,7 +260,7 @@ export async function syncFathomMeetingsForUser(userId, apiKey, options = {}) {
     client.release();
   }
 
-  const meetings = await listFathomMeetingsFromDb(userId);
+  const meetings = await listFathomMeetingsFromDb(userId, vaultKey);
   return { meetings, rateLimited, total: meetings.length, recorderEmail };
 }
 
@@ -275,15 +287,18 @@ export async function fetchFathomSummary(apiKey, recordingId) {
 }
 
 /** Fetch fresh summary for a single meeting import (one API call). */
-export async function fetchMeetingImportData(apiKey, recordingId, userId) {
+export async function fetchMeetingImportData(apiKey, recordingId, userId, vaultKey) {
   const rid = String(recordingId);
   let summary = '';
 
   const cached = await pool.query(
-    'SELECT summary FROM fathom_meetings WHERE user_id = $1 AND recording_id = $2',
+    'SELECT summary_enc FROM fathom_meetings WHERE user_id = $1 AND recording_id = $2',
     [userId, rid],
   );
-  if (cached.rows[0]?.summary) summary = cached.rows[0].summary;
+  if (cached.rows[0]?.summary_enc) {
+    const row = decryptFathomMeetingRow(cached.rows[0], vaultKey);
+    summary = row.summary || '';
+  }
 
   if (apiKey) {
     try {
@@ -291,8 +306,8 @@ export async function fetchMeetingImportData(apiKey, recordingId, userId) {
       if (fresh) {
         summary = fresh;
         await pool.query(
-          `UPDATE fathom_meetings SET summary = $1 WHERE user_id = $2 AND recording_id = $3`,
-          [summary, userId, rid],
+          `UPDATE fathom_meetings SET summary_enc = $1 WHERE user_id = $2 AND recording_id = $3`,
+          [encryptString(summary, vaultKey), userId, rid],
         );
       }
     } catch (err) {

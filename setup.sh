@@ -6,7 +6,7 @@ echo "=============================="
 
 # Check .env exists
 if [ ! -f "server/.env" ]; then
-  echo "❌ server/.env not found. Copy .env.example and fill in your credentials."
+  echo "❌ server/.env not found. Copy server/sample.env to server/.env and fill in your credentials."
   exit 1
 fi
 
@@ -17,11 +17,29 @@ if [ -z "$FATHOM_API_KEY" ]; then
   echo "   Generate one in Fathom → Settings → API Access"
 fi
 
+PGHOST="${PGHOST:-localhost}"
+PGPORT="${PGPORT:-5432}"
+PGDATABASE="${PGDATABASE:-meeting_intelligence}"
+PGUSER="${PGUSER:-postgres}"
+
 # Install deps
 echo "📦 Installing dependencies..."
 cd server && npm install --silent
 cd ../client && npm install --silent
 cd ..
+
+# Ensure PostgreSQL database exists
+if command -v psql >/dev/null 2>&1; then
+  echo "🗄️  Ensuring PostgreSQL database exists..."
+  if ! PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -tc \
+    "SELECT 1 FROM pg_database WHERE datname = '$PGDATABASE'" | grep -q 1; then
+    PGPASSWORD="$PGPASSWORD" createdb -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" "$PGDATABASE"
+    echo "   Created database: $PGDATABASE"
+  fi
+else
+  echo "⚠️  psql not found — create the database manually:"
+  echo "   psql -U $PGUSER -c \"CREATE DATABASE $PGDATABASE;\""
+fi
 
 # Run migrations
 echo "🗄️  Running database migrations..."

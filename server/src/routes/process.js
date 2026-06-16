@@ -3,15 +3,19 @@ import pool from '../db/pool.js';
 import { extractActionItems } from '../lib/extractActionItems.js';
 import { persistExtraction } from '../lib/meetingItems.js';
 import { categorizeWithRules } from '../lib/categorizeMeeting.js';
-import { requireAuth, getUserId, getUserFathomKey } from '../middleware/auth.js';
+import { requireAuth, getUserId, getUserFathomKey, getVaultKey, requireVault } from '../middleware/auth.js';
 import { fetchMeetingImportData } from '../lib/fathomSync.js';
-import { sendError, logError } from '../lib/httpErrors.js';
+import { encryptMeetingRow } from '../lib/dataCrypto.js';
+import { encryptString } from '../lib/encryption.js';
+import { sendError } from '../lib/httpErrors.js';
 
 const router = Router();
 router.use(requireAuth);
+router.use(requireVault);
 
 router.post('/meeting', async (req, res) => {
   const userId = getUserId(req);
+  const vaultKey = getVaultKey(req);
   const {
     meetingId,
     fathomId,
@@ -51,10 +55,10 @@ router.post('/meeting', async (req, res) => {
     let summaryText = summary;
     let actionItems = fathomActionItems || [];
     const recordingId = bareRecordingId;
-    const apiKey = getUserFathomKey(req);
+    const apiKey = await getUserFathomKey(req);
 
     if (apiKey && recordingId) {
-      const fresh = await fetchMeetingImportData(apiKey, recordingId, userId);
+      const fresh = await fetchMeetingImportData(apiKey, recordingId, userId, vaultKey);
       if (fresh.summary) summaryText = fresh.summary;
       if (fresh.actionItems?.length) actionItems = fresh.actionItems;
     }
@@ -93,39 +97,48 @@ router.post('/meeting', async (req, res) => {
       }
     }
 
+    const encrypted = encryptMeetingRow({
+      title: title || 'Untitled Meeting',
+      participants: participants || extracted?.participants_mentioned || [],
+      summary: summaryText || '',
+      summary_raw: content,
+    }, vaultKey);
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       await client.query(
         `INSERT INTO meetings (
-          id, user_id, fathom_id, title, meeting_date, participants, summary, summary_raw,
+          id, user_id, fathom_id, title_enc, meeting_date, participants_enc, summary_enc, summary_raw_enc,
           folder_id, category, category_source, folder_locked, processed_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
         ON CONFLICT (id) DO UPDATE SET
           user_id = EXCLUDED.user_id,
-          title = EXCLUDED.title,
-          summary = EXCLUDED.summary,
-          summary_raw = EXCLUDED.summary_raw,
-          participants = EXCLUDED.participants,
+          title_enc = EXCLUDED.title_enc,
+          summary_enc = EXCLUDED.summary_enc,
+          summary_raw_enc = EXCLUDED.summary_raw_enc,
+          participants_enc = EXCLUDED.participants_enc,
           processed_at = NOW(),
           updated_at = NOW(),
           folder_id = CASE WHEN meetings.folder_locked THEN meetings.folder_id ELSE EXCLUDED.folder_id END,
           category = CASE WHEN meetings.folder_locked THEN meetings.category ELSE EXCLUDED.category END,
           category_source = CASE WHEN meetings.folder_locked THEN meetings.category_source ELSE EXCLUDED.category_source END`,
         [
-          dbMeetingId, userId, bareRecordingId, title || 'Untitled Meeting',
+          dbMeetingId, userId, bareRecordingId, encrypted.title_enc,
           meetingDate || null,
-          JSON.stringify(participants || extracted?.participants_mentioned || []),
-          summaryText || '', content,
+          encrypted.participants_enc,
+          encrypted.summary_enc,
+          encrypted.summary_raw_enc,
           folderId, category, categorySource, folderLocked,
         ],
       );
 
       if (transcript) {
         await client.query(
-          `INSERT INTO transcripts (meeting_id, content) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-          [dbMeetingId, transcript],
+          `INSERT INTO transcripts (meeting_id, content_enc, speakers_enc)
+           VALUES ($1, $2, $3)`,
+          [dbMeetingId, encryptString(transcript, vaultKey), null],
         );
       }
 
@@ -137,25 +150,25 @@ router.post('/meeting', async (req, res) => {
       client.release();
     }
 
-    const saved = await persistExtraction(dbMeetingId, extracted);
+    const saved = await persistExtraction(dbMeetingId, extracted, vaultKey);
     const itemCount = saved.action_items.length;
     const stepCount = saved.next_steps.length;
 
-      res.json({
-        success: true,
-        meetingId: dbMeetingId,
-        source: extracted?.source || 'none',
-        warning: (itemCount + stepCount) > 0
-          ? null
-          : 'Meeting saved. No action items were found in the Fathom summary yet.',
-        category: { folder_id: folderId, category, source: categorySource },
-        extracted: extracted || { action_items: [], next_steps: [], key_decisions: [] },
-        counts: {
-          action_items: itemCount,
-          next_steps: stepCount,
-          key_decisions: (extracted?.key_decisions || []).length,
-        },
-      });
+    res.json({
+      success: true,
+      meetingId: dbMeetingId,
+      source: extracted?.source || 'none',
+      warning: (itemCount + stepCount) > 0
+        ? null
+        : 'Meeting saved. No action items were found in the Fathom summary yet.',
+      category: { folder_id: folderId, category, source: categorySource },
+      extracted: extracted || { action_items: [], next_steps: [], key_decisions: [] },
+      counts: {
+        action_items: itemCount,
+        next_steps: stepCount,
+        key_decisions: (extracted?.key_decisions || []).length,
+      },
+    });
   } catch (err) {
     return sendError(res, err, 'process_meeting', err.status);
   }

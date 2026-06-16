@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, getUserId, getUserFathomKey } from '../middleware/auth.js';
+import { requireAuth, getUserId, getUserFathomKey, getVaultKey, requireVault } from '../middleware/auth.js';
 import {
   listFathomMeetingsFromDb,
   syncFathomMeetingsForUser,
@@ -13,25 +13,31 @@ import { logError, sendError } from '../lib/httpErrors.js';
 const router = Router();
 
 router.use(requireAuth);
+router.use(requireVault);
 
-router.get('/status', (req, res) => {
-  res.json({
-    hasApiKey: Boolean(getUserFathomKey(req)),
-    manualImportAvailable: true,
-  });
+router.get('/status', async (req, res) => {
+  try {
+    const apiKey = await getUserFathomKey(req);
+    res.json({
+      hasApiKey: Boolean(apiKey),
+      manualImportAvailable: true,
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message, code: err.code });
+  }
 });
 
-// GET — read from local DB only (no Fathom API call)
 router.get('/meetings', async (req, res) => {
   try {
     const userId = getUserId(req);
-    const meetings = await listFathomMeetingsFromDb(userId);
-    const hasKey = Boolean(getUserFathomKey(req));
+    const vaultKey = getVaultKey(req);
+    const meetings = await listFathomMeetingsFromDb(userId, vaultKey);
+    const apiKey = await getUserFathomKey(req);
 
     res.json({
       meetings,
-      connected: hasKey,
-      needsApiKey: !hasKey,
+      connected: Boolean(apiKey),
+      needsApiKey: !apiKey,
       total: meetings.length,
       fromCache: true,
       lastSyncedAt: req.user.fathom_synced_at,
@@ -41,17 +47,17 @@ router.get('/meetings', async (req, res) => {
   }
 });
 
-// POST — user-initiated refresh from Fathom API
 router.post('/meetings/sync', async (req, res) => {
-  const apiKey = getUserFathomKey(req);
-  if (!apiKey) {
-    return res.status(400).json({ error: 'Add your Fathom API key in Settings first.' });
-  }
-
   try {
+    const apiKey = await getUserFathomKey(req);
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Add your Fathom API key in Settings first.' });
+    }
+
     const userId = getUserId(req);
-    const recorderEmail = await getRecorderEmailForUser(userId);
-    const result = await syncFathomMeetingsForUser(userId, apiKey, { recorderEmail });
+    const vaultKey = getVaultKey(req);
+    const recorderEmail = await getRecorderEmailForUser(userId, vaultKey);
+    const result = await syncFathomMeetingsForUser(userId, apiKey, { recorderEmail, vaultKey });
     req.user.fathom_synced_at = new Date().toISOString();
     res.json({
       meetings: result.meetings,
@@ -65,18 +71,23 @@ router.post('/meetings/sync', async (req, res) => {
     });
   } catch (err) {
     const userId = getUserId(req);
+    const vaultKey = getVaultKey(req);
     logError('POST /fathom/meetings/sync', err, { userId, status: err.status });
-    const cached = await listFathomMeetingsFromDb(userId);
-    if (cached.length) {
-      return res.json({
-        meetings: cached,
-        connected: true,
-        total: cached.length,
-        rateLimited: err.status === 429,
-        warning: err.status === 429
-          ? 'Fathom rate limit hit. Showing cached meetings — try Refresh again in a few minutes.'
-          : `Sync failed (${err.message}). Showing cached meetings.`,
-      });
+    try {
+      const cached = await listFathomMeetingsFromDb(userId, vaultKey);
+      if (cached.length) {
+        return res.json({
+          meetings: cached,
+          connected: true,
+          total: cached.length,
+          rateLimited: err.status === 429,
+          warning: err.status === 429
+            ? 'Fathom rate limit hit. Showing cached meetings — try Refresh again in a few minutes.'
+            : `Sync failed (${err.message}). Showing cached meetings.`,
+        });
+      }
+    } catch {
+      // fall through
     }
     const status = err.status === 429 ? 429 : 500;
     res.status(status).json({
@@ -111,10 +122,10 @@ router.patch('/meetings/:recordingId/folder', async (req, res) => {
 });
 
 router.get('/meetings/:fathomId/summary', async (req, res) => {
-  const apiKey = getUserFathomKey(req);
-  if (!apiKey) return res.status(400).json({ error: 'Add your Fathom API key in Settings first.' });
-
   try {
+    const apiKey = await getUserFathomKey(req);
+    if (!apiKey) return res.status(400).json({ error: 'Add your Fathom API key in Settings first.' });
+
     const summary = await fetchFathomSummary(apiKey, req.params.fathomId);
     res.json({ summary });
   } catch (err) {

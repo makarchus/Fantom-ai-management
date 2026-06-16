@@ -2,10 +2,18 @@ import { Router } from 'express';
 import pool from '../db/pool.js';
 import { listFolders, createFolder, deleteFolderIfEmpty } from '../lib/folders.js';
 import { categorizeWithRules } from '../lib/categorizeMeeting.js';
-import { requireAuth, getUserId } from '../middleware/auth.js';
+import { requireAuth, getUserId, getVaultKey, requireVault } from '../middleware/auth.js';
 import { sendError, logError, friendlyError } from '../lib/httpErrors.js';
 import { extractActionItems } from '../lib/extractActionItems.js';
 import { persistExtraction } from '../lib/meetingItems.js';
+import {
+  decryptActionItemRow,
+  decryptFathomMeetingRow,
+  decryptMeetingRow,
+  decryptNextStepRow,
+  decryptTranscriptRow,
+  encryptActionItemRow,
+} from '../lib/dataCrypto.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -38,38 +46,43 @@ router.delete('/folders/:folderId', async (req, res) => {
   }
 });
 
-router.get('/commitments/all', async (req, res) => {
+router.get('/commitments/all', requireVault, async (req, res) => {
   try {
+    const vaultKey = getVaultKey(req);
+    const userId = getUserId(req);
     const { rows } = await pool.query(
-      `SELECT cv.* FROM commitments_view cv
-       JOIN meetings m ON m.id = cv.meeting_id
-       WHERE m.user_id = $1
-       ORDER BY cv.meeting_date DESC, cv.priority DESC`,
-      [getUserId(req)],
+      `SELECT ai.*, m.meeting_date, m.title_enc, m.id AS meeting_id
+       FROM action_items ai
+       JOIN meetings m ON m.id = ai.meeting_id
+       WHERE m.user_id = $1 AND ai.commitment_type IN ('commitment', 'next_step')
+       ORDER BY m.meeting_date DESC, ai.priority DESC`,
+      [userId],
     );
-    res.json({ commitments: rows });
+
+    const commitments = rows.map((row) => {
+      const item = decryptActionItemRow(row, vaultKey);
+      const meeting = decryptMeetingRow({ title_enc: row.title_enc }, vaultKey);
+      return {
+        ...item,
+        meeting_id: row.meeting_id,
+        meeting_title: meeting.title,
+        meeting_date: row.meeting_date,
+      };
+    });
+
+    res.json({ commitments });
   } catch (err) {
     return sendError(res, err, 'commitments');
   }
 });
 
-router.get('/', async (req, res) => {
+router.get('/', requireVault, async (req, res) => {
   try {
     const userId = getUserId(req);
+    const vaultKey = getVaultKey(req);
     const { q, folder_id: folderId } = req.query;
     const values = [userId];
     const conditions = ['m.user_id = $1'];
-
-    if (q?.trim()) {
-      values.push(`%${q.trim()}%`);
-      const idx = values.length;
-      conditions.push(`(
-        m.title ILIKE $${idx}
-        OR m.summary ILIKE $${idx}
-        OR m.category ILIKE $${idx}
-        OR f.name ILIKE $${idx}
-      )`);
-    }
 
     if (folderId) {
       values.push(folderId);
@@ -94,65 +107,78 @@ router.get('/', async (req, res) => {
       ORDER BY f.sort_order ASC NULLS LAST, m.meeting_date DESC NULLS LAST, m.created_at DESC
     `, values);
 
-    res.json({ meetings: rows });
+    let meetings = rows.map((row) => {
+      const decrypted = decryptMeetingRow(row, vaultKey);
+      return {
+        ...decrypted,
+        folder_name: row.folder_name,
+        folder_sort_order: row.folder_sort_order,
+        action_item_count: Number(row.action_item_count),
+        next_step_count: Number(row.next_step_count),
+        has_transcript: Number(row.has_transcript) > 0,
+      };
+    });
+
+    if (q?.trim()) {
+      const needle = q.trim().toLowerCase();
+      meetings = meetings.filter((m) =>
+        m.title?.toLowerCase().includes(needle)
+        || m.summary?.toLowerCase().includes(needle)
+        || m.category?.toLowerCase().includes(needle)
+        || m.folder_name?.toLowerCase().includes(needle));
+    }
+
+    res.json({ meetings });
   } catch (err) {
     return sendError(res, err, 'meetings_list');
   }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireVault, async (req, res) => {
   const { id } = req.params;
   const userId = getUserId(req);
+  const vaultKey = getVaultKey(req);
   const bareId = id.replace(/^fathom_/, '');
   const prefixedId = id.startsWith('fathom_') || id.startsWith('manual_') ? id : `fathom_${bareId}`;
 
   try {
-    let meetingRes = await pool.query(
+    const meetingRes = await pool.query(
       `SELECT m.*, f.name AS folder_name
        FROM meetings m
        LEFT JOIN folders f ON f.id = m.folder_id
-       WHERE (m.id = $2 OR m.id = $3 OR m.fathom_id = $2 OR m.fathom_id = $4)
-         AND (m.user_id = $1 OR m.user_id IS NULL)`,
+       WHERE m.user_id = $1
+         AND (m.id = $2 OR m.id = $3 OR m.fathom_id = $2 OR m.fathom_id = $4)`,
       [userId, id, prefixedId, bareId],
     );
-
-    if (meetingRes.rows.length && meetingRes.rows[0].user_id == null) {
-      await pool.query('UPDATE meetings SET user_id = $1 WHERE id = $2 AND user_id IS NULL', [
-        userId,
-        meetingRes.rows[0].id,
-      ]);
-      meetingRes.rows[0].user_id = userId;
-    }
 
     if (!meetingRes.rows.length) {
       logError('GET /meetings/:id', new Error('Meeting not found'), { id, prefixedId, bareId, userId });
       return res.status(404).json({ error: friendlyError({ status: 404 }, 'saved_meeting') });
     }
 
-    const meeting = meetingRes.rows[0];
+    const meeting = decryptMeetingRow(meetingRes.rows[0], vaultKey);
+    meeting.folder_name = meetingRes.rows[0].folder_name;
     const lookupId = meeting.id;
 
     const [actionItems, nextSteps, transcriptRes] = await Promise.all([
-      pool.query('SELECT * FROM action_items WHERE meeting_id = $1 ORDER BY priority DESC, assignee, created_at', [lookupId]),
+      pool.query('SELECT * FROM action_items WHERE meeting_id = $1 ORDER BY priority DESC, created_at', [lookupId]),
       pool.query('SELECT * FROM next_steps WHERE meeting_id = $1 ORDER BY due_date, created_at', [lookupId]),
-      pool.query('SELECT content, speakers, imported_at FROM transcripts WHERE meeting_id = $1', [lookupId]),
+      pool.query('SELECT * FROM transcripts WHERE meeting_id = $1', [lookupId]),
     ]);
 
-    let actionItemsRows = actionItems.rows;
-    let nextStepsRows = nextSteps.rows;
+    let actionItemsRows = actionItems.rows.map((row) => decryptActionItemRow(row, vaultKey));
+    let nextStepsRows = nextSteps.rows.map((row) => decryptNextStepRow(row, vaultKey));
 
-    // Re-extract from summary when items are missing (e.g. legacy imports or improved parser)
     if (actionItemsRows.length === 0 && nextStepsRows.length === 0 && meeting.summary) {
       let fathomActionItems = [];
       if (meeting.fathom_id) {
         const cached = await pool.query(
-          'SELECT action_items FROM fathom_meetings WHERE user_id = $1 AND recording_id = $2',
+          'SELECT action_items_enc FROM fathom_meetings WHERE user_id = $1 AND recording_id = $2',
           [userId, String(meeting.fathom_id)],
         );
-        const raw = cached.rows[0]?.action_items;
-        if (Array.isArray(raw)) fathomActionItems = raw;
-        else if (typeof raw === 'string') {
-          try { fathomActionItems = JSON.parse(raw); } catch { /* ignore */ }
+        if (cached.rows[0]?.action_items_enc) {
+          const fm = decryptFathomMeetingRow(cached.rows[0], vaultKey);
+          fathomActionItems = fm.action_items || [];
         }
       }
 
@@ -162,24 +188,28 @@ router.get('/:id', async (req, res) => {
       });
 
       if (extracted?.action_items?.length || extracted?.next_steps?.length) {
-        const saved = await persistExtraction(lookupId, extracted);
+        const saved = await persistExtraction(lookupId, extracted, vaultKey);
         actionItemsRows = saved.action_items;
         nextStepsRows = saved.next_steps;
       }
     }
 
+    const transcript = transcriptRes.rows[0]
+      ? decryptTranscriptRow(transcriptRes.rows[0], vaultKey)
+      : null;
+
     res.json({
       meeting,
       action_items: actionItemsRows,
       next_steps: nextStepsRows,
-      transcript: transcriptRes.rows[0] || null,
+      transcript,
     });
   } catch (err) {
     return sendError(res, err, 'meeting_detail');
   }
 });
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireVault, async (req, res) => {
   const { id } = req.params;
   const userId = getUserId(req);
   const { folder_id: folderId, category } = req.body;
@@ -215,35 +245,35 @@ router.patch('/:id', async (req, res) => {
       logError('PATCH /meetings/:id', new Error('Meeting not found'), { id, userId });
       return res.status(404).json({ error: friendlyError({ status: 404 }, 'saved_meeting') });
     }
-    res.json({ meeting: rows[0] });
+    const meeting = decryptMeetingRow(rows[0], getVaultKey(req));
+    res.json({ meeting });
   } catch (err) {
     return sendError(res, err, 'meeting_update');
   }
 });
 
-router.post('/organize', async (req, res) => {
+router.post('/organize', requireVault, async (req, res) => {
   const userId = getUserId(req);
+  const vaultKey = getVaultKey(req);
   try {
     const { rows } = await pool.query(
-      `SELECT id, title, summary, participants FROM meetings
+      `SELECT id, title_enc, summary_enc, participants_enc FROM meetings
        WHERE user_id = $1 AND folder_locked = false AND category_source IS NULL`,
       [userId],
     );
     let updated = 0;
 
-    for (const meeting of rows) {
-      const participants = typeof meeting.participants === 'string'
-        ? JSON.parse(meeting.participants)
-        : meeting.participants;
+    for (const row of rows) {
+      const meeting = decryptMeetingRow(row, vaultKey);
       const cat = categorizeWithRules({
         title: meeting.title,
         summary: meeting.summary,
-        participants,
+        participants: meeting.participants,
       });
       await pool.query(
         `UPDATE meetings SET folder_id = $1, category = $2, category_source = $3
          WHERE id = $4 AND user_id = $5`,
-        [cat.folder_id, cat.category, cat.source, meeting.id, userId],
+        [cat.folder_id, cat.category, cat.source, row.id, userId],
       );
       updated += 1;
     }
@@ -254,8 +284,9 @@ router.post('/organize', async (req, res) => {
   }
 });
 
-router.patch('/action-items/:id', async (req, res) => {
+router.patch('/action-items/:id', requireVault, async (req, res) => {
   const { id } = req.params;
+  const vaultKey = getVaultKey(req);
   const { status, priority, due_date, notes, assignee, description } = req.body;
   const sets = [];
   const values = [];
@@ -264,9 +295,18 @@ router.patch('/action-items/:id', async (req, res) => {
   if (status !== undefined) { sets.push(`status = $${idx++}`); values.push(status); }
   if (priority !== undefined) { sets.push(`priority = $${idx++}`); values.push(priority); }
   if (due_date !== undefined) { sets.push(`due_date = $${idx++}`); values.push(due_date); }
-  if (notes !== undefined) { sets.push(`notes = $${idx++}`); values.push(notes); }
-  if (assignee !== undefined) { sets.push(`assignee = $${idx++}`); values.push(assignee); }
-  if (description !== undefined) { sets.push(`description = $${idx++}`); values.push(description); }
+  if (notes !== undefined) {
+    sets.push(`notes_enc = $${idx++}`);
+    values.push(notes ? encryptActionItemRow({ assignee: 'x', description: 'x', notes }, vaultKey).notes_enc : null);
+  }
+  if (assignee !== undefined) {
+    sets.push(`assignee_enc = $${idx++}`);
+    values.push(encryptActionItemRow({ assignee, description: 'x' }, vaultKey).assignee_enc);
+  }
+  if (description !== undefined) {
+    sets.push(`description_enc = $${idx++}`);
+    values.push(encryptActionItemRow({ assignee: 'x', description }, vaultKey).description_enc);
+  }
 
   if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 
@@ -280,13 +320,13 @@ router.patch('/action-items/:id', async (req, res) => {
       logError('PATCH /action-items/:id', new Error('Action item not found'), { id });
       return res.status(404).json({ error: 'That action item was not found. Try refreshing the page.' });
     }
-    res.json({ action_item: rows[0] });
+    res.json({ action_item: decryptActionItemRow(rows[0], vaultKey) });
   } catch (err) {
     return sendError(res, err, 'action_item_update');
   }
 });
 
-router.patch('/next-steps/:id', async (req, res) => {
+router.patch('/next-steps/:id', requireVault, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
   try {
@@ -298,13 +338,13 @@ router.patch('/next-steps/:id', async (req, res) => {
       logError('PATCH /next-steps/:id', new Error('Next step not found'), { id });
       return res.status(404).json({ error: 'That next step was not found. Try refreshing the page.' });
     }
-    res.json({ next_step: rows[0] });
+    res.json({ next_step: decryptNextStepRow(rows[0], getVaultKey(req)) });
   } catch (err) {
     return sendError(res, err, 'next_step_update');
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireVault, async (req, res) => {
   const { id } = req.params;
   try {
     await pool.query('DELETE FROM meetings WHERE id = $1 AND user_id = $2', [id, getUserId(req)]);

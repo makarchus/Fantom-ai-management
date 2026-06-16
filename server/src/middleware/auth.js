@@ -7,6 +7,10 @@ export function getUserId(req) {
   return req.user?.id;
 }
 
-export function getUserFathomKey(req) {
-  return req.user?.fathom_api_key || null;
+export { getVaultKey, isVaultUnlocked, requireVault } from '../lib/vault.js';
+
+export async function getUserFathomKey(req) {
+  const { getUserSecretsFromRequest } = await import('../lib/userSecrets.js');
+  const secrets = await getUserSecretsFromRequest(req);
+  return secrets.fathomApiKey || null;
 }
