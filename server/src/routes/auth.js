@@ -45,6 +45,7 @@ router.post('/register', async (req, res) => {
       message: 'Verification code sent to your email.',
       pendingId: result.pendingId,
       email: result.email,
+      codePrefix: result.codePrefix,
       expiresAt: result.expiresAt,
     });
   } catch (err) {
@@ -75,6 +76,7 @@ router.post('/resend-code', async (req, res) => {
     res.json({
       message: 'A new verification code was sent.',
       expiresAt: result.expiresAt,
+      codePrefix: result.codePrefix,
     });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -91,6 +93,7 @@ router.post('/resend-login-code', async (req, res) => {
       message: 'A new sign-in code was sent.',
       pendingLoginId: result.pendingLoginId,
       expiresAt: result.expiresAt,
+      codePrefix: result.codePrefix,
     });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -170,6 +173,7 @@ router.post('/login', (req, res, next) => {
         message: 'Sign-in verification code sent to your email.',
         pendingLoginId: pending.pendingLoginId,
         email: pending.email,
+        codePrefix: pending.codePrefix,
         expiresAt: pending.expiresAt,
         needsEncryptionSetup: pending.needsEncryptionSetup,
       });
@@ -217,6 +221,7 @@ router.get('/google/callback', (req, res, next) => {
         loginVerify: '1',
         pendingLoginId: pending.pendingLoginId,
         email: pending.email,
+        codePrefix: pending.codePrefix,
       });
       if (pending.needsEncryptionSetup) params.set('needsEncryptionSetup', '1');
       res.redirect(`${CLIENT_URL}?${params.toString()}`);

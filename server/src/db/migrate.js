@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   email         TEXT NOT NULL,
   name          TEXT,
   password_hash TEXT NOT NULL,
+  code_prefix   TEXT NOT NULL DEFAULT 'AA',
   code_hash     TEXT NOT NULL,
   attempts      INTEGER DEFAULT 0,
   expires_at    TIMESTAMPTZ NOT NULL,
@@ -166,12 +167,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS encryption_key_stored_enc TEXT;
 CREATE TABLE IF NOT EXISTS pending_logins (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_prefix   TEXT NOT NULL DEFAULT 'AA',
   code_hash     TEXT NOT NULL,
   attempts      INTEGER DEFAULT 0,
   expires_at    TIMESTAMPTZ NOT NULL,
   created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_pending_logins_user ON pending_logins (user_id);
+
+ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS code_prefix TEXT NOT NULL DEFAULT 'AA';
+ALTER TABLE pending_logins ADD COLUMN IF NOT EXISTS code_prefix TEXT NOT NULL DEFAULT 'AA';
 
 CREATE TABLE IF NOT EXISTS action_item_comments (
   id              SERIAL PRIMARY KEY,

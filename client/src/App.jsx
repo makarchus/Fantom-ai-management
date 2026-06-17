@@ -58,6 +58,7 @@ export default function App() {
         setPendingLogin({
           pendingLoginId: params.get('pendingLoginId'),
           email: params.get('email') || '',
+          codePrefix: params.get('codePrefix') || '',
           needsEncryptionSetup: params.get('needsEncryptionSetup') === '1',
         });
         setAuthStep('login-verify');
@@ -86,13 +87,13 @@ export default function App() {
     }
   }
 
-  function handleLoginPending({ pendingLoginId, email, needsEncryptionSetup }) {
-    setPendingLogin({ pendingLoginId, email, needsEncryptionSetup });
+  function handleLoginPending({ pendingLoginId, email, codePrefix, needsEncryptionSetup }) {
+    setPendingLogin({ pendingLoginId, email, codePrefix, needsEncryptionSetup });
     setAuthStep('login-verify');
   }
 
-  function handleRegisterPending({ pendingId, email }) {
-    setPendingRegistration({ pendingId, email });
+  function handleRegisterPending({ pendingId, email, codePrefix }) {
+    setPendingRegistration({ pendingId, email, codePrefix });
     setAuthStep('verify');
   }
 
@@ -234,7 +235,9 @@ export default function App() {
           mode="register"
           pendingId={pendingRegistration.pendingId}
           email={pendingRegistration.email}
+          codePrefix={pendingRegistration.codePrefix}
           onVerified={handleVerified}
+          onCodePrefixChange={(prefix) => setPendingRegistration((p) => ({ ...p, codePrefix: prefix }))}
           onBack={() => { setAuthStep('login'); setPendingRegistration(null); }}
         />
       );
@@ -245,8 +248,10 @@ export default function App() {
           mode="login"
           pendingLoginId={pendingLogin.pendingLoginId}
           email={pendingLogin.email}
+          codePrefix={pendingLogin.codePrefix}
           onVerified={handleAuthSuccess}
           onPendingLoginIdChange={(id) => setPendingLogin((p) => ({ ...p, pendingLoginId: id }))}
+          onCodePrefixChange={(prefix) => setPendingLogin((p) => ({ ...p, codePrefix: prefix }))}
           onBack={() => { setAuthStep('login'); setPendingLogin(null); }}
         />
       );

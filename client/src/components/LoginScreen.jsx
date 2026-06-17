@@ -36,12 +36,13 @@ export default function LoginScreen({
           return;
         }
         const result = await api.register({ email, password, name });
-        onRegisterPending?.({ pendingId: result.pendingId, email: result.email });
+        onRegisterPending?.({ pendingId: result.pendingId, email: result.email, codePrefix: result.codePrefix });
       } else {
         const result = await api.login({ email, password });
         onLoginPending?.({
           pendingLoginId: result.pendingLoginId,
           email: result.email,
+          codePrefix: result.codePrefix,
           needsEncryptionSetup: result.needsEncryptionSetup,
         });
       }

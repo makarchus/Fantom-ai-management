@@ -18,15 +18,17 @@ const pool = new Pool({
 });
 
 const resetSql = `
-DROP TABLE IF EXISTS fathom_meetings CASCADE;
-DROP TABLE IF EXISTS fathom_meeting_cache CASCADE;
+DROP TABLE IF EXISTS action_item_comments CASCADE;
 DROP TABLE IF EXISTS action_item_assignments CASCADE;
 DROP TABLE IF EXISTS action_items CASCADE;
+DROP TABLE IF EXISTS pending_logins CASCADE;
+DROP TABLE IF EXISTS pending_registrations CASCADE;
 DROP TABLE IF EXISTS next_steps CASCADE;
 DROP TABLE IF EXISTS transcripts CASCADE;
 DROP TABLE IF EXISTS meetings CASCADE;
+DROP TABLE IF EXISTS fathom_meetings CASCADE;
+DROP TABLE IF EXISTS fathom_meeting_cache CASCADE;
 DROP TABLE IF EXISTS user_sessions CASCADE;
-DROP TABLE IF EXISTS pending_registrations CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS folders CASCADE;
 DROP FUNCTION IF EXISTS update_updated_at() CASCADE;

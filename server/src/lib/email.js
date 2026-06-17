@@ -24,54 +24,72 @@ function getTransporter() {
   return transporter;
 }
 
-export async function sendVerificationEmail({ to, code, name }) {
+export async function sendVerificationEmail({ to, code, codePrefix, name }) {
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
   const displayName = name || to.split('@')[0];
+  const prefix = codePrefix || '??';
+  const formatted = `${prefix}-${code}`;
 
   await getTransporter().sendMail({
     from: `"Meeting Intelligence" <${from}>`,
     to,
-    subject: 'Your verification code',
+    subject: `Your verification code [${prefix}]`,
     text: [
       `Hi ${displayName},`,
       '',
-      `Your Meeting Intelligence verification code is: ${code}`,
+      `Your verification code prefix is: ${prefix}`,
+      `Your 6-digit code is: ${code}`,
       '',
+      `Full code: ${formatted}`,
+      '',
+      'Use the code whose prefix matches what is shown on the sign-in screen.',
       'This code expires in 15 minutes.',
       '',
       'If you did not request this, you can ignore this email.',
     ].join('\n'),
     html: `
       <p>Hi ${displayName},</p>
-      <p>Your Meeting Intelligence verification code is:</p>
-      <p style="font-size:24px;font-weight:bold;letter-spacing:4px">${code}</p>
+      <p>Your verification code:</p>
+      <p style="font-size:28px;font-weight:bold;letter-spacing:6px;margin:16px 0">
+        <span style="color:#6366f1">${prefix}</span>-<span>${code}</span>
+      </p>
+      <p>Look for the email with prefix <strong style="font-size:18px;letter-spacing:2px">${prefix}</strong> on the verification screen.</p>
       <p>This code expires in <strong>15 minutes</strong>.</p>
       <p>If you did not request this, you can ignore this email.</p>
     `,
   });
 }
 
-export async function sendLoginVerificationEmail({ to, code, name }) {
+export async function sendLoginVerificationEmail({ to, code, codePrefix, name }) {
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
   const displayName = name || to.split('@')[0];
+  const prefix = codePrefix || '??';
+  const formatted = `${prefix}-${code}`;
 
   await getTransporter().sendMail({
     from: `"Meeting Intelligence" <${from}>`,
     to,
-    subject: 'Your sign-in verification code',
+    subject: `Your sign-in code [${prefix}]`,
     text: [
       `Hi ${displayName},`,
       '',
-      `Your Meeting Intelligence sign-in code is: ${code}`,
+      `Your sign-in code prefix is: ${prefix}`,
+      `Your 6-digit code is: ${code}`,
       '',
+      `Full code: ${formatted}`,
+      '',
+      'Use the code whose prefix matches what is shown on the sign-in screen.',
       'This code expires in 15 minutes.',
       '',
       'If you did not try to sign in, change your password and contact support.',
     ].join('\n'),
     html: `
       <p>Hi ${displayName},</p>
-      <p>Your Meeting Intelligence sign-in verification code is:</p>
-      <p style="font-size:24px;font-weight:bold;letter-spacing:4px">${code}</p>
+      <p>Your sign-in verification code:</p>
+      <p style="font-size:28px;font-weight:bold;letter-spacing:6px;margin:16px 0">
+        <span style="color:#6366f1">${prefix}</span>-<span>${code}</span>
+      </p>
+      <p>Look for the email with prefix <strong style="font-size:18px;letter-spacing:2px">${prefix}</strong> on the sign-in screen.</p>
       <p>This code expires in <strong>15 minutes</strong>.</p>
       <p>If you did not try to sign in, change your password and contact support.</p>
     `,

@@ -75,7 +75,9 @@ Generate a key in Fathom → Settings → API Access. See [Fathom API quickstart
 To wipe all users, meetings, and categories and start fresh:
 
 ```bash
-npm run db:reset
+./scripts/db-reset.sh    # prompts for confirmation (type RESET)
+npm run db:reset         # same
+npm run db:reset -- --yes   # skip confirmation
 ```
 
 ## Troubleshooting

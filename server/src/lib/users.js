@@ -6,7 +6,8 @@ import {
   encryptForStorage,
   generateEncryptionKey,
   generateUserSalt,
-  generateVerificationCode,
+  createVerificationChallenge,
+  normalizeVerificationDigits,
   hashVerificationCode,
   verifyVerificationCode,
   verifyEncryptionKey,
@@ -19,6 +20,11 @@ import { userHasFathomKey } from './userSecrets.js';
 const SALT_ROUNDS = 12;
 const CODE_TTL_MS = 15 * 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
+
+function verifyPendingCode(submittedCode, pendingId, pending) {
+  const digits = normalizeVerificationDigits(submittedCode, pending.code_prefix || 'AA');
+  return verifyVerificationCode(digits, pendingId, pending.code_hash);
+}
 
 const USER_SELECT = `
   id, google_id, email, name, avatar_url, auth_provider, email_verified,
@@ -82,25 +88,27 @@ export async function requestRegistration({ email, password, name }) {
   }
 
   const pendingId = randomUUID();
-  const code = generateVerificationCode();
+  const { prefix, digits } = createVerificationChallenge();
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const expiresAt = new Date(Date.now() + CODE_TTL_MS);
 
   await pool.query(
-    `INSERT INTO pending_registrations (id, email, name, password_hash, code_hash, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [pendingId, normalizedEmail, name?.trim() || null, passwordHash, hashVerificationCode(code, pendingId), expiresAt],
+    `INSERT INTO pending_registrations (id, email, name, password_hash, code_prefix, code_hash, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [pendingId, normalizedEmail, name?.trim() || null, passwordHash, prefix, hashVerificationCode(digits, pendingId), expiresAt],
   );
 
   await sendVerificationEmail({
     to: normalizedEmail,
-    code,
+    codePrefix: prefix,
+    code: digits,
     name: name?.trim(),
   });
 
   return {
     pendingId,
     email: normalizedEmail,
+    codePrefix: prefix,
     expiresAt: expiresAt.toISOString(),
   };
 }
@@ -131,7 +139,7 @@ export async function verifyRegistration({ pendingId, code }) {
     throw err;
   }
 
-  if (!verifyVerificationCode(code, pendingId, pending.code_hash)) {
+  if (!verifyPendingCode(code, pendingId, pending)) {
     await pool.query(
       'UPDATE pending_registrations SET attempts = attempts + 1 WHERE id = $1',
       [pendingId],
@@ -213,24 +221,26 @@ export async function requestLoginVerification(user) {
   await pool.query('DELETE FROM pending_logins WHERE user_id = $1', [user.id]);
 
   const pendingLoginId = randomUUID();
-  const code = generateVerificationCode();
+  const { prefix, digits } = createVerificationChallenge();
   const expiresAt = new Date(Date.now() + CODE_TTL_MS);
 
   await pool.query(
-    `INSERT INTO pending_logins (id, user_id, code_hash, expires_at)
-     VALUES ($1, $2, $3, $4)`,
-    [pendingLoginId, user.id, hashVerificationCode(code, pendingLoginId), expiresAt],
+    `INSERT INTO pending_logins (id, user_id, code_prefix, code_hash, expires_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [pendingLoginId, user.id, prefix, hashVerificationCode(digits, pendingLoginId), expiresAt],
   );
 
   await sendLoginVerificationEmail({
     to: user.email,
-    code,
+    codePrefix: prefix,
+    code: digits,
     name: user.name,
   });
 
   return {
     pendingLoginId,
     email: user.email,
+    codePrefix: prefix,
     expiresAt: expiresAt.toISOString(),
     needsEncryptionSetup: !user.encryption_key_verifier,
   };
@@ -262,7 +272,7 @@ export async function verifyLoginCode({ pendingLoginId, code }) {
     throw err;
   }
 
-  if (!verifyVerificationCode(code, pendingLoginId, pending.code_hash)) {
+  if (!verifyPendingCode(code, pendingLoginId, pending)) {
     await pool.query(
       'UPDATE pending_logins SET attempts = attempts + 1 WHERE id = $1',
       [pendingLoginId],
@@ -382,20 +392,21 @@ export async function resendVerificationCode(pendingId) {
     throw err;
   }
 
-  const code = generateVerificationCode();
+  const { prefix, digits } = createVerificationChallenge();
   const expiresAt = new Date(Date.now() + CODE_TTL_MS);
   await pool.query(
     `UPDATE pending_registrations
-     SET code_hash = $1, expires_at = $2, attempts = 0
-     WHERE id = $3`,
-    [hashVerificationCode(code, pendingId), expiresAt, pendingId],
+     SET code_prefix = $1, code_hash = $2, expires_at = $3, attempts = 0
+     WHERE id = $4`,
+    [prefix, hashVerificationCode(digits, pendingId), expiresAt, pendingId],
   );
 
   await sendVerificationEmail({
     to: pending.email,
-    code,
+    codePrefix: prefix,
+    code: digits,
     name: pending.name,
   });
 
-  return { expiresAt: expiresAt.toISOString() };
+  return { expiresAt: expiresAt.toISOString(), codePrefix: prefix };
 }

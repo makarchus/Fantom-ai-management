@@ -98,6 +98,38 @@ export function generateVerificationCode() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+// Unambiguous uppercase letters (no I or O).
+const PREFIX_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+export function generateCodePrefix() {
+  const bytes = randomBytes(2);
+  return (
+    PREFIX_CHARS[bytes[0] % PREFIX_CHARS.length]
+    + PREFIX_CHARS[bytes[1] % PREFIX_CHARS.length]
+  );
+}
+
+export function createVerificationChallenge() {
+  const prefix = generateCodePrefix();
+  const digits = generateVerificationCode();
+  return { prefix, digits };
+}
+
+/** Accept 6 digits, or prefix + digits (e.g. K7123456 or K7-123456). */
+export function normalizeVerificationDigits(submitted, prefix) {
+  const raw = String(submitted).trim().toUpperCase().replace(/\s/g, '');
+  const p = prefix.toUpperCase();
+  if (/^\d{6}$/.test(raw)) return raw;
+  if (raw.startsWith(`${p}-`) && /^\d{6}$/.test(raw.slice(p.length + 1))) {
+    return raw.slice(p.length + 1);
+  }
+  if (raw.startsWith(p) && /^\d{6}$/.test(raw.slice(p.length))) {
+    return raw.slice(p.length);
+  }
+  const digitsOnly = raw.replace(/\D/g, '');
+  return digitsOnly.length >= 6 ? digitsOnly.slice(-6) : digitsOnly;
+}
+
 export function getStorageMasterKey() {
   const secret = process.env.ENCRYPTION_STORAGE_KEY || process.env.SESSION_SECRET;
   if (!secret) {
