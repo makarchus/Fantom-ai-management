@@ -32,7 +32,7 @@ export default function EncryptionKeyScreen({ onComplete }) {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100vh', padding: 24, background: 'var(--navy-950)',
+        minHeight: '100%', padding: 24,
       }}>
         <div className="card" style={{ width: '100%', maxWidth: 480, padding: 28 }}>
           <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
@@ -66,7 +66,7 @@ export default function EncryptionKeyScreen({ onComplete }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      minHeight: '100vh', padding: 24, background: 'var(--navy-950)',
+      minHeight: '100%', padding: 24,
     }}>
       <div className="card" style={{ width: '100%', maxWidth: 480, padding: 28 }}>
         <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--white-soft)', marginBottom: 8 }}>

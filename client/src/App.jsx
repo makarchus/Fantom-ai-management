@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Target, RefreshCw, Settings, LogOut, Key, KeyRound, User, ListChecks, Archive } from 'lucide-react';
+import { Target } from 'lucide-react';
 import Sidebar from './components/Sidebar.jsx';
 import MeetingImporter from './components/MeetingImporter.jsx';
 import MeetingDetail from './components/MeetingDetail.jsx';
 import CommitmentsTracker from './components/CommitmentsTracker.jsx';
 import ManualMeetingImporter from './components/ManualMeetingImporter.jsx';
+import LandingPage from './components/LandingPage.jsx';
 import LoginScreen from './components/LoginScreen.jsx';
 import VerifyEmailScreen from './components/VerifyEmailScreen.jsx';
 import EncryptionKeyScreen from './components/EncryptionKeyScreen.jsx';
@@ -13,7 +14,22 @@ import MyActionItems from './components/MyActionItems.jsx';
 import ArchivedActionItems from './components/ArchivedActionItems.jsx';
 import ActionItemsQueue from './components/ActionItemsQueue.jsx';
 import VaultUnlockBanner from './components/VaultUnlockBanner.jsx';
+import AppHeader from './components/AppHeader.jsx';
 import { api } from './lib/api.js';
+
+function AppShell({ header, children, scroll = false }) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', height: '100vh',
+      overflow: 'hidden', background: 'var(--navy-950)',
+    }}>
+      {header}
+      <div style={{ flex: 1, overflow: scroll ? 'auto' : 'hidden', minHeight: 0 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -21,7 +37,8 @@ export default function App() {
   const [authError, setAuthError] = useState(null);
   const [pendingRegistration, setPendingRegistration] = useState(null);
   const [pendingLogin, setPendingLogin] = useState(null);
-  const [authStep, setAuthStep] = useState('login');
+  const [authStep, setAuthStep] = useState('landing');
+  const [loginMode, setLoginMode] = useState('login');
   const [showSettings, setShowSettings] = useState(false);
 
   const [sidebarTab, setSidebarTab] = useState('fathom');
@@ -69,7 +86,7 @@ export default function App() {
       if (u?.vaultUnlocked) bumpActionQueue();
     } catch {
       setUser(null);
-      setAuthStep('login');
+      setAuthStep('landing');
     } finally {
       setAuthLoading(false);
     }
@@ -115,7 +132,6 @@ export default function App() {
     }
   }, []);
 
-  // Load from local DB only — no Fathom API call
   const loadFathomFromDb = useCallback(async () => {
     setLoadingFathom(true);
     setFathomError(null);
@@ -131,7 +147,6 @@ export default function App() {
     }
   }, []);
 
-  // User-initiated sync from Fathom API
   const syncFromFathom = useCallback(async () => {
     if (!user?.hasFathomKey) {
       setShowSettings(true);
@@ -164,12 +179,43 @@ export default function App() {
   async function handleLogout() {
     await api.logout();
     setUser(null);
-    setAuthStep('login');
+    setAuthStep('landing');
+    setLoginMode('login');
     setPendingRegistration(null);
     setPendingLogin(null);
     setFathomMeetings([]);
     setDbMeetings([]);
     setView('welcome');
+  }
+
+  function handleGetStarted() {
+    setLoginMode('register');
+    setAuthStep('login');
+  }
+
+  function handleSignIn() {
+    setLoginMode('login');
+    setAuthStep('login');
+  }
+
+  function handlePublicBack() {
+    if (authStep === 'login-verify') {
+      setAuthStep('login');
+      setPendingLogin(null);
+    } else if (authStep === 'verify') {
+      setAuthStep('landing');
+      setPendingRegistration(null);
+    } else {
+      setAuthStep('landing');
+    }
+  }
+
+  function handleLogoClick() {
+    if (user && authStep === 'app') {
+      setView('welcome');
+    } else {
+      setAuthStep('landing');
+    }
   }
 
   async function handleMoveFolder(meeting, tab, folderId) {
@@ -220,61 +266,91 @@ export default function App() {
     handleOpenSaved(meetingId);
   }
 
+  const publicHeader = (
+    <AppHeader
+      mode="public"
+      authStep={authStep}
+      onLogoClick={handleLogoClick}
+      onGetStarted={handleGetStarted}
+      onSignIn={handleSignIn}
+      onBackHome={handlePublicBack}
+    />
+  );
+
   if (authLoading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--slate-300)' }}>
-        <div className="spinner" style={{ marginRight: 10 }} /> Loading…
-      </div>
+      <AppShell header={<AppHeader mode="loading" />}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          height: '100%', color: 'var(--slate-300)',
+        }}>
+          <div className="spinner" style={{ marginRight: 10 }} /> Loading…
+        </div>
+      </AppShell>
     );
   }
 
   if (!user) {
+    if (authStep === 'landing') {
+      return (
+        <AppShell header={publicHeader} scroll>
+          <LandingPage onGetStarted={handleGetStarted} />
+        </AppShell>
+      );
+    }
     if (authStep === 'verify' && pendingRegistration) {
       return (
-        <VerifyEmailScreen
-          mode="register"
-          pendingId={pendingRegistration.pendingId}
-          email={pendingRegistration.email}
-          codePrefix={pendingRegistration.codePrefix}
-          onVerified={handleVerified}
-          onCodePrefixChange={(prefix) => setPendingRegistration((p) => ({ ...p, codePrefix: prefix }))}
-          onBack={() => { setAuthStep('login'); setPendingRegistration(null); }}
-        />
+        <AppShell header={publicHeader}>
+          <VerifyEmailScreen
+            mode="register"
+            pendingId={pendingRegistration.pendingId}
+            email={pendingRegistration.email}
+            codePrefix={pendingRegistration.codePrefix}
+            onVerified={handleVerified}
+            onCodePrefixChange={(prefix) => setPendingRegistration((p) => ({ ...p, codePrefix: prefix }))}
+          />
+        </AppShell>
       );
     }
     if (authStep === 'login-verify' && pendingLogin) {
       return (
-        <VerifyEmailScreen
-          mode="login"
-          pendingLoginId={pendingLogin.pendingLoginId}
-          email={pendingLogin.email}
-          codePrefix={pendingLogin.codePrefix}
-          onVerified={handleAuthSuccess}
-          onPendingLoginIdChange={(id) => setPendingLogin((p) => ({ ...p, pendingLoginId: id }))}
-          onCodePrefixChange={(prefix) => setPendingLogin((p) => ({ ...p, codePrefix: prefix }))}
-          onBack={() => { setAuthStep('login'); setPendingLogin(null); }}
-        />
+        <AppShell header={publicHeader}>
+          <VerifyEmailScreen
+            mode="login"
+            pendingLoginId={pendingLogin.pendingLoginId}
+            email={pendingLogin.email}
+            codePrefix={pendingLogin.codePrefix}
+            onVerified={handleAuthSuccess}
+            onPendingLoginIdChange={(id) => setPendingLogin((p) => ({ ...p, pendingLoginId: id }))}
+            onCodePrefixChange={(prefix) => setPendingLogin((p) => ({ ...p, codePrefix: prefix }))}
+          />
+        </AppShell>
       );
     }
     return (
-      <LoginScreen
-        authError={authError}
-        onAuthSuccess={handleAuthSuccess}
-        onRegisterPending={handleRegisterPending}
-        onLoginPending={handleLoginPending}
-      />
+      <AppShell header={publicHeader}>
+        <LoginScreen
+          initialMode={loginMode}
+          authError={authError}
+          onAuthSuccess={handleAuthSuccess}
+          onRegisterPending={handleRegisterPending}
+          onLoginPending={handleLoginPending}
+        />
+      </AppShell>
     );
   }
 
   if (authStep === 'setup' || !user.vaultSetup) {
     return (
-      <EncryptionKeyScreen
-        onComplete={() => {
-          setUser((u) => ({ ...u, vaultSetup: true, vaultUnlocked: true }));
-          setAuthStep('app');
-          bumpActionQueue();
-        }}
-      />
+      <AppShell header={<AppHeader mode="setup" onLogoClick={handleLogoClick} />}>
+        <EncryptionKeyScreen
+          onComplete={() => {
+            setUser((u) => ({ ...u, vaultSetup: true, vaultUnlocked: true }));
+            setAuthStep('app');
+            bumpActionQueue();
+          }}
+        />
+      </AppShell>
     );
   }
 
@@ -282,164 +358,115 @@ export default function App() {
     ? (selectedFathomMeeting?.recording_id || selectedFathomMeeting?.id)
     : selectedDbMeetingId;
 
+  const appHeader = (
+    <AppHeader
+      mode="app"
+      user={user}
+      view={view}
+      syncing={syncing}
+      onLogoClick={handleLogoClick}
+      onViewChange={setView}
+      onOpenSettings={() => setShowSettings(true)}
+      onSyncFathom={syncFromFathom}
+      onLogout={handleLogout}
+    />
+  );
+
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      <Sidebar
-        dbMeetings={dbMeetings}
-        fathomMeetings={fathomMeetings}
-        folders={folders}
-        loadingFathom={loadingFathom}
-        syncing={syncing}
-        hasFathomKey={user.hasFathomKey}
-        selectedId={selectedId}
-        onSelect={handleSidebarSelect}
-        activeTab={sidebarTab}
-        onTabChange={(tab) => { setSidebarTab(tab); setView('welcome'); }}
-        onMoveFolder={handleMoveFolder}
-        onOpenSettings={() => setShowSettings(true)}
-        onFoldersChange={loadDbMeetings}
-        onOpenSaved={handleOpenSaved}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      {appHeader}
 
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-        <div style={{
-          height: 'var(--header-h)', borderBottom: '1px solid var(--navy-700)',
-          display: 'flex', alignItems: 'center', padding: '0 24px', gap: 12,
-          flexShrink: 0, background: 'var(--navy-900)',
-        }}>
-          <div style={{ flex: 1 }} />
-          <button className={`btn ${view === 'my-actions' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
-            onClick={() => setView(view === 'my-actions' ? 'welcome' : 'my-actions')}>
-            <ListChecks size={13} /> My Actions
-          </button>
-          <button className={`btn ${view === 'archive' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
-            onClick={() => setView(view === 'archive' ? 'welcome' : 'archive')}>
-            <Archive size={13} /> Archive
-          </button>
-          <button className={`btn ${view === 'commitments' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
-            onClick={() => setView(view === 'commitments' ? 'welcome' : 'commitments')}>
-            <Target size={13} /> Commitments
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowSettings(true)} title="Settings">
-            <Settings size={13} />
-          </button>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={syncFromFathom}
-            disabled={syncing}
-            title="Refresh meetings from Fathom"
-          >
-            <RefreshCw size={13} className={syncing ? 'spin' : ''} />
-            {syncing ? 'Syncing…' : 'Refresh'}
-          </button>
-          <span
-            className="badge"
-            style={{
-              fontSize: 10,
-              padding: '4px 8px',
-              background: user.hasFathomKey ? 'var(--green-dim)' : 'var(--amber-dim)',
-              color: user.hasFathomKey ? 'var(--green)' : 'var(--amber)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-            title={user.hasFathomKey ? 'Fathom API key configured' : 'Fathom API key not set'}
-          >
-            {user.hasFathomKey ? <Key size={10} /> : <KeyRound size={10} />}
-            {user.hasFathomKey ? 'Fathom connected' : 'No API key'}
-          </span>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            paddingLeft: 8,
-            borderLeft: '1px solid var(--navy-700)',
-          }}>
-            {user.avatar_url ? (
-              <img src={user.avatar_url} alt="" style={{ width: 24, height: 24, borderRadius: '50%' }} />
-            ) : (
-              <div style={{
-                width: 24, height: 24, borderRadius: '50%',
-                background: 'var(--indigo-dim)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <User size={12} color="var(--indigo-light)" />
-              </div>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+        <Sidebar
+          dbMeetings={dbMeetings}
+          fathomMeetings={fathomMeetings}
+          folders={folders}
+          loadingFathom={loadingFathom}
+          syncing={syncing}
+          hasFathomKey={user.hasFathomKey}
+          selectedId={selectedId}
+          onSelect={handleSidebarSelect}
+          activeTab={sidebarTab}
+          onTabChange={(tab) => { setSidebarTab(tab); setView('welcome'); }}
+          onMoveFolder={handleMoveFolder}
+          onOpenSettings={() => setShowSettings(true)}
+          onFoldersChange={loadDbMeetings}
+          onOpenSaved={handleOpenSaved}
+        />
+
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: 0 }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+            {user.vaultSetup && !user.vaultUnlocked && (
+              <VaultUnlockBanner onUnlocked={(u) => setUser(u)} />
             )}
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--white-soft)' }}>
-              {user.name || user.email}
-            </span>
+
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              {view === 'user-guide' ? (
+                <iframe
+                  src="/docs/user-guide.html"
+                  title="User Guide"
+                  style={{ width: '100%', height: '100%', border: 'none', background: 'var(--navy-950)' }}
+                />
+              ) : view === 'my-actions' ? (
+                <MyActionItems />
+              ) : view === 'archive' ? (
+                <ArchivedActionItems
+                  onSelectMeeting={(id) => { setSelectedDbMeetingId(id); setSidebarTab('saved'); setView('detail'); }}
+                  onChanged={bumpActionQueue}
+                />
+              ) : view === 'commitments' ? (
+                <div style={{ height: '100%', overflowY: 'auto' }}>
+                  <CommitmentsTracker onSelectMeeting={(id) => { setSelectedDbMeetingId(id); setSidebarTab('saved'); setView('detail'); }} />
+                </div>
+              ) : view === 'import' && selectedFathomMeeting ? (
+                <div style={{ height: '100%', overflowY: 'auto', padding: 24 }}>
+                  <MeetingImporter
+                    fathomMeeting={selectedFathomMeeting}
+                    savedMeetingId={selectedFathomMeeting.saved_meeting_id}
+                    savedProcessedAt={selectedFathomMeeting.saved_processed_at}
+                    onImportComplete={handleImportComplete}
+                    onOpenSaved={handleOpenSaved}
+                  />
+                </div>
+              ) : view === 'manual-import' ? (
+                <div style={{ height: '100%', overflowY: 'auto', padding: 24 }}>
+                  <ManualMeetingImporter onImportComplete={handleImportComplete} onBack={() => setView('welcome')} />
+                </div>
+              ) : view === 'detail' && selectedDbMeetingId ? (
+                <MeetingDetail
+                  meetingId={selectedDbMeetingId}
+                  folders={folders}
+                  onBack={() => { setView('welcome'); setSidebarTab('saved'); }}
+                  onDelete={() => { loadDbMeetings(); setView('welcome'); bumpActionQueue(); }}
+                  onFolderChange={loadDbMeetings}
+                  onActionItemsChanged={bumpActionQueue}
+                />
+              ) : (
+                <WelcomeScreen
+                  user={user}
+                  dbCount={dbMeetings.length}
+                  fathomCount={fathomMeetings.length}
+                  fathomError={fathomError}
+                  fathomWarning={fathomWarning}
+                  onOpenSettings={() => setShowSettings(true)}
+                  onBrowseFathom={() => setSidebarTab('fathom')}
+                  onManualImport={() => setView('manual-import')}
+                  onViewCommitments={() => setView('commitments')}
+                />
+              )}
+            </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={handleLogout} title="Sign out">
-            <LogOut size={13} />
-          </button>
+
+          <ActionItemsQueue
+            refreshKey={actionQueueRefresh}
+            onSelectMeeting={(id) => {
+              setSelectedDbMeetingId(id);
+              setSidebarTab('saved');
+              setView('detail');
+              bumpActionQueue();
+            }}
+          />
         </div>
-
-        {user.vaultSetup && !user.vaultUnlocked && (
-          <VaultUnlockBanner onUnlocked={(u) => setUser(u)} />
-        )}
-
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          {view === 'my-actions' ? (
-            <MyActionItems />
-          ) : view === 'archive' ? (
-            <ArchivedActionItems
-              onSelectMeeting={(id) => { setSelectedDbMeetingId(id); setSidebarTab('saved'); setView('detail'); }}
-              onChanged={bumpActionQueue}
-            />
-          ) : view === 'commitments' ? (
-            <div style={{ height: '100%', overflowY: 'auto' }}>
-              <CommitmentsTracker onSelectMeeting={(id) => { setSelectedDbMeetingId(id); setSidebarTab('saved'); setView('detail'); }} />
-            </div>
-          ) : view === 'import' && selectedFathomMeeting ? (
-            <div style={{ height: '100%', overflowY: 'auto', padding: 24 }}>
-              <MeetingImporter
-                fathomMeeting={selectedFathomMeeting}
-                savedMeetingId={selectedFathomMeeting.saved_meeting_id}
-                savedProcessedAt={selectedFathomMeeting.saved_processed_at}
-                onImportComplete={handleImportComplete}
-                onOpenSaved={handleOpenSaved}
-              />
-            </div>
-          ) : view === 'manual-import' ? (
-            <div style={{ height: '100%', overflowY: 'auto', padding: 24 }}>
-              <ManualMeetingImporter onImportComplete={handleImportComplete} onBack={() => setView('welcome')} />
-            </div>
-          ) : view === 'detail' && selectedDbMeetingId ? (
-            <MeetingDetail
-              meetingId={selectedDbMeetingId}
-              folders={folders}
-              onBack={() => { setView('welcome'); setSidebarTab('saved'); }}
-              onDelete={() => { loadDbMeetings(); setView('welcome'); bumpActionQueue(); }}
-              onFolderChange={loadDbMeetings}
-              onActionItemsChanged={bumpActionQueue}
-            />
-          ) : (
-            <WelcomeScreen
-              user={user}
-              dbCount={dbMeetings.length}
-              fathomCount={fathomMeetings.length}
-              fathomError={fathomError}
-              fathomWarning={fathomWarning}
-              onOpenSettings={() => setShowSettings(true)}
-              onBrowseFathom={() => setSidebarTab('fathom')}
-              onManualImport={() => setView('manual-import')}
-              onViewCommitments={() => setView('commitments')}
-            />
-          )}
-        </div>
-      </div>
-
-      <ActionItemsQueue
-        refreshKey={actionQueueRefresh}
-        onSelectMeeting={(id) => {
-          setSelectedDbMeetingId(id);
-          setSidebarTab('saved');
-          setView('detail');
-          bumpActionQueue();
-        }}
-      />
       </div>
 
       {showSettings && (
@@ -469,7 +496,7 @@ function WelcomeScreen({
         Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
       </h1>
       <p style={{ fontSize: 14, color: 'var(--slate-300)', maxWidth: 480, lineHeight: 1.6, marginBottom: 24 }}>
-        Meetings are stored locally and organized into folders. Use <strong>Refresh</strong> to pull new meetings from Fathom.
+        Meetings are stored in your encrypted vault and organized into folders. Use <strong>Refresh</strong> to pull new meetings from Fathom.
       </p>
 
       {!user?.hasFathomKey && (
@@ -477,7 +504,7 @@ function WelcomeScreen({
           <p style={{ fontSize: 12, color: 'var(--slate-200)', marginBottom: 10 }}>
             Add your Fathom API key in Settings to sync meetings.
           </p>
-          <button className="btn btn-primary btn-sm" onClick={onOpenSettings}>Open Settings</button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={onOpenSettings}>Open Settings</button>
         </div>
       )}
 
@@ -501,10 +528,10 @@ function WelcomeScreen({
       </div>
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
-        <button className="btn btn-primary" onClick={onBrowseFathom}>Browse Meetings</button>
-        <button className="btn btn-ghost" onClick={onManualImport}>Paste Summary</button>
+        <button type="button" className="btn btn-primary" onClick={onBrowseFathom}>Browse Meetings</button>
+        <button type="button" className="btn btn-ghost" onClick={onManualImport}>Paste Summary</button>
         {dbCount > 0 && (
-          <button className="btn btn-ghost" onClick={onViewCommitments}><Target size={14} /> Commitments</button>
+          <button type="button" className="btn btn-ghost" onClick={onViewCommitments}><Target size={14} /> Commitments</button>
         )}
       </div>
     </div>

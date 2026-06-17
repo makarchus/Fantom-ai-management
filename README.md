@@ -1,91 +1,69 @@
 # Meeting Intelligence
 
-AI-powered meeting tracker that connects to **Fathom**, extracts action items and commitments by person, and stores everything in an **encrypted** local PostgreSQL database.
+AI-powered meeting accountability platform — connects to **Fathom**, extracts action items, assigns work by email, and tracks progress until done. Encrypted storage with email 2FA on every sign-in.
 
-## Security model
+**Live app:** `npm run dev` → [http://localhost:5173](http://localhost:5173)
 
-- **Email 2FA on every sign-in** — password or Google OAuth, then a 6-digit code emailed each time
-- **Encrypted at rest** — Fathom API keys, meeting summaries, action items, and transcripts use AES-256-GCM
-- **Recovery key** — a private UUID is generated once at signup; save it only if you might lose email access
+---
 
-## Architecture
+## Documentation
 
-```
-meeting-intelligence/
-├── client/          React frontend (Vite, port 5173)
-├── server/          Express API (Node.js, port 3001)
-│   ├── .env         ← configure this
-│   └── src/
-│       ├── lib/encryption.js   User vault crypto
-│       ├── routes/auth.js      Register, verify, sign-in 2FA
-│       └── db/migrate.js       Schema migrations
-└── docs/GMAIL_SETUP.md        Gmail App Password setup
-```
+| Document | Audience | Description |
+|----------|----------|-------------|
+| [**Developer & AI Guide**](./docs/DEVELOPER.md) | Engineers, AI agents | Full architecture, API reference, schema, auth flows |
+| [**User Guide**](./client/public/docs/user-guide.html) | End users | Available after sign-in via header **User Guide** (also at `/docs/user-guide.html`) |
+| [**Gmail SMTP Setup**](./docs/GMAIL_SETUP.md) | DevOps | Email 2FA configuration |
 
-## Prerequisites
+---
 
-- Node.js 18+
-- PostgreSQL (local, port 5432)
-- Gmail account with App Password (for registration emails) — see [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md)
-- Fathom account (optional, for API sync)
-- Anthropic API key (optional, AI fallback)
-
-## Setup
-
-### 1. Configure environment
+## Quick start
 
 ```bash
-cp server/sample.env server/.env
-```
-
-Edit `server/.env` — at minimum set PostgreSQL, Gmail SMTP, and `SESSION_SECRET`. See `server/sample.env` for all variables.
-
-**Gmail for email verification:** follow [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md) to create a Google App Password and set `SMTP_*` variables.
-
-### 2. Install and initialize
-
-```bash
-./setup.sh          # installs deps, creates DB if needed, runs migrations
-# or fresh start (deletes all data):
-npm run db:reset
-```
-
-### 3. Start the app
-
-```bash
+cp server/sample.env server/.env   # edit PostgreSQL, SMTP, SESSION_SECRET
+./setup.sh
 npm run dev
 ```
 
-Open **http://localhost:5173**
+Open **http://localhost:5173** — landing page with pricing and signup.
 
-## Sign-in flow
+---
 
-1. **Create account** — email + password, then verify with a 6-digit email code
-2. **Save recovery key** — optional UUID shown once; only needed if you lose email access
-3. **Sign in** — email + password (or Google), then enter the email verification code every time
+## Key features
 
-## Fathom connection
+- **Fathom sync** — import meetings, summaries, transcripts
+- **AI extraction** — action items, commitments, next steps
+- **Assignments** — multi-email assignees, notifications, cross-user inbox
+- **Action queue** — overdue-first sidebar with progress comments
+- **Archive** — owner completes items with full resolution history
+- **Security** — email 2FA every login, AES-256 encryption, recovery key
 
-Per-user Fathom API keys are stored **encrypted** in Settings after sign-in.
+---
 
-Generate a key in Fathom → Settings → API Access. See [Fathom API quickstart](https://developers.fathom.ai/quickstart).
+## Pricing (product)
 
-## Database reset
+| Plan | Price | Trial | Commitment |
+|------|-------|-------|------------|
+| Solo | $5.99/mo (full features) | 3 months free | Monthly |
+| Team (5–25) | $3.99/user/mo | 3 months free | Monthly/annual |
+| Business (25–100) | $2.99/user/mo | 3 months free | **1-year minimum** |
+| Enterprise (100+) | Custom | Pilot | **1-year minimum**, volume discount |
 
-To wipe all users, meetings, and categories and start fresh:
+*Billing UI is on the landing page; payment integration is not yet implemented.*
+
+---
+
+## Commands
 
 ```bash
-./scripts/db-reset.sh    # prompts for confirmation (type RESET)
-npm run db:reset         # same
-npm run db:reset -- --yes   # skip confirmation
+npm run dev              # API + client
+npm run db:migrate       # Apply schema
+npm run db:reset         # Wipe database (interactive)
+./scripts/db-reset.sh    # Same with RESET confirmation
+npm run services -- status
 ```
+
+---
 
 ## Troubleshooting
 
-**Verification email not sent** — Check `SMTP_*` in `server/.env` and [docs/GMAIL_SETUP.md](docs/GMAIL_SETUP.md).
-
-**Lost email access** — Use “Recover with encryption key” on the sign-in screen with your saved recovery key.
-
-**PostgreSQL connection refused** — Ensure Postgres is running and credentials in `.env` match.
-
-**Fathom sync failed** — Add your Fathom API key in Settings after signing in.
+See [Developer Guide — Troubleshooting](./docs/DEVELOPER.md) and [User Guide](./client/public/docs/user-guide.html).

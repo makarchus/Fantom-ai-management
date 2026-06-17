@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meeting Intelligence — User Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f1629;
+      --card: #1a2440;
+      --border: #263354;
+      --text: #f0f4ff;
+      --muted: #a0aec0;
+      --indigo: #6366f1;
+      --green: #10b981;
+      --amber: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .layout { display: flex; min-height: 100vh; }
+    nav {
+      width: 260px;
+      flex-shrink: 0;
+      background: #060b17;
+      border-right: 1px solid var(--border);
+      padding: 24px 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    nav h1 { font-size: 15px; font-weight: 700; margin-bottom: 4px; color: var(--indigo); }
+    nav .sub { font-size: 11px; color: var(--muted); margin-bottom: 20px; }
+    nav a {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin-bottom: 2px;
+    }
+    nav a:hover { background: var(--card); color: var(--text); }
+    main {
+      flex: 1;
+      max-width: 820px;
+      padding: 40px 48px 80px;
+    }
+    h2 { font-size: 26px; font-weight: 700; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+    h2:first-of-type { margin-top: 0; border-top: none; padding-top: 0; }
+    h3 { font-size: 17px; font-weight: 600; margin: 24px 0 10px; color: #cbd5e0; }
+    p { margin-bottom: 14px; color: #e2e8f0; font-size: 15px; }
+    ul, ol { margin: 0 0 16px 20px; color: #e2e8f0; font-size: 15px; }
+    li { margin-bottom: 8px; }
+    .hero { margin-bottom: 32px; }
+    .hero h2 { font-size: 32px; border: none; margin: 0 0 12px; padding: 0; }
+    .hero p { font-size: 17px; color: var(--muted); }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 22px;
+      margin: 16px 0;
+    }
+    .card strong { color: var(--indigo); }
+    .tip { border-left: 3px solid var(--green); padding-left: 14px; margin: 16px 0; color: var(--muted); font-size: 14px; }
+    .warn { border-left: 3px solid var(--amber); padding-left: 14px; margin: 16px 0; color: var(--muted); font-size: 14px; }
+    code { background: #263354; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+    th, td { border: 1px solid var(--border); padding: 10px 12px; text-align: left; }
+    th { background: var(--card); color: var(--muted); font-weight: 600; }
+    .badge { display: inline-block; background: rgba(99,102,241,0.2); color: #818cf8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+    .cta { display: inline-block; margin-top: 12px; background: var(--indigo); color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; }
+    @media (max-width: 768px) {
+      .layout { flex-direction: column; }
+      nav { width: 100%; height: auto; position: relative; }
+      main { padding: 24px 20px 60px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <nav>
+      <h1>Meeting Intelligence</h1>
+      <div class="sub">User Guide</div>
+      <a href="#overview">Overview</a>
+      <a href="#getting-started">Getting started</a>
+      <a href="#sign-in">Sign in & security</a>
+      <a href="#fathom">Connect Fathom</a>
+      <a href="#meetings">Meetings & folders</a>
+      <a href="#action-items">Action items</a>
+      <a href="#assignments">Assigning work</a>
+      <a href="#queue">Action queue</a>
+      <a href="#archive">Archive</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#help">Help</a>
+    </nav>
+    <main>
+      <div class="hero" id="overview">
+        <h2>Turn meetings into accountable outcomes</h2>
+        <p>Meeting Intelligence syncs with Fathom, extracts action items automatically, and keeps your team aligned — with encrypted storage and email verification on every sign-in.</p>
+        <a class="cta" href="/">← Back to app</a>
+      </div>
+
+      <h2 id="getting-started">Getting started</h2>
+      <ol>
+        <li><strong>Create an account</strong> — email and password on the home page.</li>
+        <li><strong>Verify your email</strong> — enter the 6-digit code from your inbox. Match the <strong>2-letter prefix</strong> shown on screen (e.g. <code>K7</code>) to the email subject <code>[K7]</code>.</li>
+        <li><strong>Save your recovery key</strong> — shown once. You only need it if you lose email access.</li>
+        <li><strong>Connect Fathom</strong> — open Settings and add your Fathom API key.</li>
+        <li><strong>Refresh meetings</strong> — click Refresh in the header to pull recordings from Fathom.</li>
+      </ol>
+
+      <h2 id="sign-in">Sign in & security</h2>
+      <p>Every sign-in uses <strong>two-factor authentication</strong>:</p>
+      <ul>
+        <li>Enter email and password (or Sign in with Google).</li>
+        <li>Check your email for a code with a unique <strong>prefix</strong>.</li>
+        <li>Enter the 6 digits on the verification screen.</li>
+      </ul>
+      <div class="tip">If you received multiple codes, use only the one whose prefix matches what is displayed on the sign-in screen.</div>
+      <div class="warn">Lost email access? Use <strong>Recover with encryption key</strong> on the sign-in page with the recovery key you saved at signup.</div>
+
+      <h2 id="fathom">Connect Fathom</h2>
+      <p>Fathom records your meetings. Meeting Intelligence imports summaries and transcripts to extract action items.</p>
+      <ol>
+        <li>In Fathom: <strong>Settings → API Access</strong> — generate an API key.</li>
+        <li>In Meeting Intelligence: <strong>Settings</strong> (gear icon) — paste your API key and recorder email.</li>
+        <li>Click <strong>Refresh</strong> in the header to sync meetings.</li>
+      </ol>
+      <p>Meetings appear under the <strong>Fathom</strong> tab in the sidebar. Import a meeting to save it permanently and extract action items.</p>
+
+      <h2 id="meetings">Meetings & folders</h2>
+      <h3>Sidebar tabs</h3>
+      <ul>
+        <li><span class="badge">Fathom</span> — recordings from your Fathom account (sync on Refresh).</li>
+        <li><span class="badge">Saved</span> — imported meetings stored in your encrypted vault.</li>
+      </ul>
+      <h3>Folders</h3>
+      <p>Organize meetings into folders (Sales, Engineering, 1:1s, etc.). Drag or use folder controls to categorize. Use <strong>Organize</strong> for AI-assisted sorting.</p>
+      <h3>Meeting detail</h3>
+      <p>Open a saved meeting to view:</p>
+      <ul>
+        <li><strong>Summary</strong> — AI-generated meeting recap</li>
+        <li><strong>Transcript</strong> — full conversation</li>
+        <li><strong>Actions</strong> — extracted action items grouped by assignee</li>
+      </ul>
+
+      <h2 id="action-items">Action items</h2>
+      <p>Action items are extracted when you import a meeting. Each item has:</p>
+      <ul>
+        <li>Description, priority (high / medium / low), due date</li>
+        <li>One or more assignee emails</li>
+        <li>Progress comments (running history)</li>
+      </ul>
+      <h3>As meeting owner</h3>
+      <ul>
+        <li><strong>Edit</strong> — change description, priority, due date, assignees, notes.</li>
+        <li><strong>Progress comments</strong> — add updates visible to all assignees.</li>
+        <li><strong>Mark complete</strong> (✓) — moves item to <strong>Archive</strong>.</li>
+        <li><strong>Delete</strong> (trash) — permanently removes the item and notifies removed assignees.</li>
+      </ul>
+      <h3>As assignee</h3>
+      <p>When someone assigns you by email, items appear in <strong>My Actions</strong> and the <strong>Action Queue</strong> (right panel). Add progress comments to show how work is moving forward. Only the owner can mark an item complete.</p>
+
+      <h2 id="assignments">Assigning work to others</h2>
+      <ol>
+        <li>Edit an action item and add assignee emails in the picker (autocomplete from past assignments).</li>
+        <li>New assignees receive an <strong>email notification</strong>.</li>
+        <li>If they don't have an account yet, assignments link automatically when they register with that email.</li>
+        <li>Remove an assignee with the <strong>×</strong> on their email badge — they are notified.</li>
+      </ol>
+
+      <h2 id="queue">Action queue</h2>
+      <p>The right sidebar shows your unified <strong>Action Queue</strong>:</p>
+      <ul>
+        <li>Your own action items from saved meetings</li>
+        <li>Items assigned to you by others</li>
+        <li>Sorted: <strong>overdue first</strong>, then priority, then due date</li>
+      </ul>
+      <p>Click an item to expand it — view progress history and add comments. Click <strong>Open meeting</strong> if you own the meeting.</p>
+
+      <h2 id="archive">Archive</h2>
+      <p>Header → <strong>Archive</strong> shows completed action items with full comment history. Owners can <strong>Reopen</strong> an item to continue work.</p>
+
+      <h2 id="pricing">Pricing</h2>
+      <p>All plans include a <strong>3-month free trial</strong>. No credit card required to start.</p>
+      <table>
+        <thead>
+          <tr><th>Plan</th><th>Price</th><th>Best for</th><th>Commitment</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Solo</strong></td><td>$5.99/mo (full features)</td><td>1 user</td><td>Month-to-month</td></tr>
+          <tr><td><strong>Team</strong></td><td>$3.99/user/mo</td><td>5–25 users</td><td>Monthly or annual</td></tr>
+          <tr><td><strong>Business</strong></td><td>$2.99/user/mo</td><td>25–100 users</td><td>1-year minimum</td></tr>
+          <tr><td><strong>Enterprise</strong></td><td>Custom</td><td>100+ users</td><td>1-year minimum, volume discount</td></tr>
+        </tbody>
+      </table>
+      <div class="card">
+        <strong>Company signup?</strong> Business and Enterprise plans include volume discounts with a one-year commitment. Contact sales for a quote tailored to your team size.
+      </div>
+
+      <h2 id="help">Help & troubleshooting</h2>
+      <h3>Verification email not arriving</h3>
+      <p>Check spam. Click <strong>Resend code</strong> — a new prefix will appear on screen; use the matching email.</p>
+      <h3>Fathom not syncing</h3>
+      <p>Confirm your API key in Settings. Click Refresh. If rate-limited, wait a few minutes.</p>
+      <h3>Can't see meeting content</h3>
+      <p>Import the meeting from the Fathom tab first. Encrypted content requires an active signed-in session.</p>
+      <h3>Assigned items not showing</h3>
+      <p>Register with the same email used in the assignment. Items link automatically on first login.</p>
+      <p style="margin-top: 32px;"><a class="cta" href="/">Back to app</a></p>
+    </main>
+  </div>
+</body>
+</html>

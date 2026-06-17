@@ -64,7 +64,7 @@ export default function VerifyEmailScreen({
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      minHeight: '100vh', padding: 24, background: 'var(--navy-950)',
+      minHeight: '100%', padding: 24,
     }}>
       <div className="card" style={{ width: '100%', maxWidth: 400, padding: 28 }}>
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
@@ -143,9 +143,11 @@ export default function VerifyEmailScreen({
           <RefreshCw size={14} /> {resending ? 'Sending…' : 'Resend code (new prefix)'}
         </button>
 
-        <button type="button" className="btn btn-ghost btn-sm" style={{ width: '100%' }} onClick={onBack}>
-          Back to sign in
-        </button>
+        {onBack && (
+          <button type="button" className="btn btn-ghost btn-sm" style={{ width: '100%' }} onClick={onBack}>
+            Back to sign in
+          </button>
+        )}
       </div>
     </div>
   );
